@@ -8,43 +8,55 @@
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600&display=swap');
 
 /* ═══════════════════════════════
-   SKINS — 6 temas neón
+   SKINS — 6 temas neón con combinaciones armónicas
 ═══════════════════════════════ */
+
+/* SKIN 1: Cyan + Verde — el original mejorado */
 :root {
   --bg:#020b18;--surface:#071626;--card:#0a1f35;--border:#0d3a5c;
   --accent:#00d4ff;--accent2:#00ff88;--text:#c8e8ff;--muted:#4a7a99;
   --warn:#ffcc00;--glow:0 0 20px rgba(0,212,255,0.4);--glow2:0 0 20px rgba(0,255,136,0.4);
   --ar:0,212,255;--a2r:0,255,136;
 }
+
+/* SKIN 2: Violeta + Rosa — púrpura profundo con acento rosado */
 body.skin-magenta {
-  --bg:#130818;--surface:#1e0a26;--card:#2a0d35;--border:#5c0d6e;
-  --accent:#ff00ff;--accent2:#ff6bff;--text:#f0c8ff;--muted:#8a4a99;
-  --glow:0 0 20px rgba(255,0,255,0.4);--glow2:0 0 20px rgba(255,107,255,0.4);
-  --ar:255,0,255;--a2r:255,107,255;
+  --bg:#0d0418;--surface:#160826;--card:#1e0d35;--border:#3d1560;
+  --accent:#c84bff;--accent2:#ff6eb0;--text:#eecfff;--muted:#7a4a99;
+  --warn:#ffcc00;--glow:0 0 20px rgba(200,75,255,0.4);--glow2:0 0 20px rgba(255,110,176,0.4);
+  --ar:200,75,255;--a2r:255,110,176;
 }
+
+/* SKIN 3: Verde + Amarillo lima — matrix con acento vibrante */
 body.skin-matrix {
-  --bg:#011208;--surface:#011f0d;--card:#022b12;--border:#0a5c1e;
-  --accent:#00ff41;--accent2:#00cc33;--text:#b8ffcc;--muted:#2a7a3a;
-  --glow:0 0 20px rgba(0,255,65,0.4);--glow2:0 0 20px rgba(0,204,51,0.4);
-  --ar:0,255,65;--a2r:0,204,51;
+  --bg:#020e04;--surface:#041a07;--card:#06250a;--border:#0a4d12;
+  --accent:#00e676;--accent2:#ccff33;--text:#c8ffda;--muted:#2a7a45;
+  --warn:#ffcc00;--glow:0 0 20px rgba(0,230,118,0.4);--glow2:0 0 20px rgba(204,255,51,0.4);
+  --ar:0,230,118;--a2r:204,255,51;
 }
+
+/* SKIN 4: Naranja + Cyan — complementarios cálido-frío */
 body.skin-fire {
-  --bg:#180800;--surface:#251200;--card:#321900;--border:#6e3000;
-  --accent:#ff6b00;--accent2:#ffaa00;--text:#ffe8c8;--muted:#995020;
-  --glow:0 0 20px rgba(255,107,0,0.4);--glow2:0 0 20px rgba(255,170,0,0.4);
-  --ar:255,107,0;--a2r:255,170,0;
+  --bg:#120800;--surface:#1e0f00;--card:#2a1500;--border:#5c2e00;
+  --accent:#ff7c00;--accent2:#00d4ff;--text:#ffe8cc;--muted:#8a5020;
+  --warn:#ffee44;--glow:0 0 20px rgba(255,124,0,0.4);--glow2:0 0 20px rgba(0,212,255,0.4);
+  --ar:255,124,0;--a2r:0,212,255;
 }
+
+/* SKIN 5: Rojo + Naranja dorado — fuego intenso */
 body.skin-red {
-  --bg:#180002;--surface:#250004;--card:#320005;--border:#6e000a;
-  --accent:#ff0033;--accent2:#ff4466;--text:#ffc8cc;--muted:#993344;
-  --glow:0 0 20px rgba(255,0,51,0.4);--glow2:0 0 20px rgba(255,68,102,0.4);
-  --ar:255,0,51;--a2r:255,68,102;
+  --bg:#150000;--surface:#220200;--card:#2e0400;--border:#660800;
+  --accent:#ff2244;--accent2:#ff9500;--text:#ffd0cc;--muted:#993030;
+  --warn:#ffee44;--glow:0 0 20px rgba(255,34,68,0.4);--glow2:0 0 20px rgba(255,149,0,0.4);
+  --ar:255,34,68;--a2r:255,149,0;
 }
+
+/* SKIN 6: Dorado + Turquesa — lujo con contraste elegante */
 body.skin-gold {
-  --bg:#0e0c00;--surface:#1a1800;--card:#252200;--border:#5c5000;
-  --accent:#ffd700;--accent2:#ffec6e;--text:#fff8c8;--muted:#7a7020;
-  --glow:0 0 20px rgba(255,215,0,0.4);--glow2:0 0 20px rgba(255,236,110,0.4);
-  --ar:255,215,0;--a2r:255,236,110;
+  --bg:#0c0900;--surface:#181400;--card:#221d00;--border:#4d4400;
+  --accent:#ffc400;--accent2:#00bfa5;--text:#fff8cc;--muted:#7a6a10;
+  --warn:#ff9500;--glow:0 0 20px rgba(255,196,0,0.4);--glow2:0 0 20px rgba(0,191,165,0.4);
+  --ar:255,196,0;--a2r:0,191,165;
 }
 
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -171,11 +183,11 @@ select option{background:var(--card)}
 .skin-btn:active{transform:scale(.88)}
 .skin-btn.active-skin{border-color:#fff;box-shadow:0 0 12px rgba(255,255,255,.5)}
 .skin-btn[data-skin=default]{background:linear-gradient(135deg,#00d4ff,#00ff88)}
-.skin-btn[data-skin=magenta]{background:linear-gradient(135deg,#ff00ff,#ff6bff)}
-.skin-btn[data-skin=matrix]{background:linear-gradient(135deg,#00ff41,#00cc33)}
-.skin-btn[data-skin=fire]{background:linear-gradient(135deg,#ff6b00,#ffaa00)}
-.skin-btn[data-skin=red]{background:linear-gradient(135deg,#ff0033,#ff4466)}
-.skin-btn[data-skin=gold]{background:linear-gradient(135deg,#ffd700,#ffec6e)}
+.skin-btn[data-skin=magenta]{background:linear-gradient(135deg,#c84bff,#ff6eb0)}
+.skin-btn[data-skin=matrix]{background:linear-gradient(135deg,#00e676,#ccff33)}
+.skin-btn[data-skin=fire]{background:linear-gradient(135deg,#ff7c00,#00d4ff)}
+.skin-btn[data-skin=red]{background:linear-gradient(135deg,#ff2244,#ff9500)}
+.skin-btn[data-skin=gold]{background:linear-gradient(135deg,#ffc400,#00bfa5)}
 
 .history-item{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer;transition:background .2s}
 .history-item:active{background:rgba(var(--ar),.1)}
@@ -338,7 +350,7 @@ select option{background:var(--card)}
         <button class="skin-btn" data-skin="gold" onclick="setSkin('gold')" title="Dorado"></button>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-        <span style="font-size:.72rem;color:var(--muted)">🔵 Cyan &nbsp; 🟣 Magenta &nbsp; 🟢 Matrix &nbsp; 🟠 Fuego &nbsp; 🔴 Rojo &nbsp; 🟡 Dorado</span>
+        <span style="font-size:.72rem;color:var(--muted)">🔵 Cyan+Verde &nbsp; 🟣 Violeta+Rosa &nbsp; 🟢 Verde+Lima &nbsp; 🟠 Naranja+Cyan &nbsp; 🔴 Rojo+Naranja &nbsp; 🟡 Dorado+Turquesa</span>
       </div>
     </div>
     <div class="card">
@@ -393,7 +405,7 @@ select option{background:var(--card)}
 const S={session:null,myList:[],thumbnails:[],currentType:'live',currentItems:[],currentStatuses:{},tgToken:'',tgChatId:'',pendingItem:null,pendingSeriesInfo:null,_searchItems:[],_searchType:'live',_renderedItems:[]};
 
 // ═══ SKINS ═══
-const SKIN_NAMES={default:'🔵 Cyan',magenta:'🟣 Magenta',matrix:'🟢 Matrix',fire:'🟠 Fuego',red:'🔴 Rojo',gold:'🟡 Dorado'};
+const SKIN_NAMES={default:'🔵 Cyan + Verde',magenta:'🟣 Violeta + Rosa',matrix:'🟢 Verde + Lima',fire:'🟠 Naranja + Cyan',red:'🔴 Rojo + Naranja',gold:'🟡 Dorado + Turquesa'};
 function setSkin(skin,save=true){
   document.body.className=skin==='default'?'':`skin-${skin}`;
   document.querySelectorAll('.skin-btn').forEach(b=>b.classList.toggle('active-skin',b.dataset.skin===skin));
