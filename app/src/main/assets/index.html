@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>JOX3 M3U Verifier</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600&display=swap');
+
+/* ═══════════════════════════════
+   SKINS — 6 temas neón
+═══════════════════════════════ */
+:root {
+  --bg:#020b18;--surface:#071626;--card:#0a1f35;--border:#0d3a5c;
+  --accent:#00d4ff;--accent2:#00ff88;--text:#c8e8ff;--muted:#4a7a99;
+  --warn:#ffcc00;--glow:0 0 20px rgba(0,212,255,0.4);--glow2:0 0 20px rgba(0,255,136,0.4);
+  --ar:0,212,255;--a2r:0,255,136;
+}
+body.skin-magenta {
+  --bg:#130818;--surface:#1e0a26;--card:#2a0d35;--border:#5c0d6e;
+  --accent:#ff00ff;--accent2:#ff6bff;--text:#f0c8ff;--muted:#8a4a99;
+  --glow:0 0 20px rgba(255,0,255,0.4);--glow2:0 0 20px rgba(255,107,255,0.4);
+  --ar:255,0,255;--a2r:255,107,255;
+}
+body.skin-matrix {
+  --bg:#011208;--surface:#011f0d;--card:#022b12;--border:#0a5c1e;
+  --accent:#00ff41;--accent2:#00cc33;--text:#b8ffcc;--muted:#2a7a3a;
+  --glow:0 0 20px rgba(0,255,65,0.4);--glow2:0 0 20px rgba(0,204,51,0.4);
+  --ar:0,255,65;--a2r:0,204,51;
+}
+body.skin-fire {
+  --bg:#180800;--surface:#251200;--card:#321900;--border:#6e3000;
+  --accent:#ff6b00;--accent2:#ffaa00;--text:#ffe8c8;--muted:#995020;
+  --glow:0 0 20px rgba(255,107,0,0.4);--glow2:0 0 20px rgba(255,170,0,0.4);
+  --ar:255,107,0;--a2r:255,170,0;
+}
+body.skin-red {
+  --bg:#180002;--surface:#250004;--card:#320005;--border:#6e000a;
+  --accent:#ff0033;--accent2:#ff4466;--text:#ffc8cc;--muted:#993344;
+  --glow:0 0 20px rgba(255,0,51,0.4);--glow2:0 0 20px rgba(255,68,102,0.4);
+  --ar:255,0,51;--a2r:255,68,102;
+}
+body.skin-gold {
+  --bg:#0e0c00;--surface:#1a1800;--card:#252200;--border:#5c5000;
+  --accent:#ffd700;--accent2:#ffec6e;--text:#fff8c8;--muted:#7a7020;
+  --glow:0 0 20px rgba(255,215,0,0.4);--glow2:0 0 20px rgba(255,236,110,0.4);
+  --ar:255,215,0;--a2r:255,236,110;
+}
+
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--text);font-family:'Rajdhani',sans-serif;font-size:16px;min-height:100vh;overflow-x:hidden;transition:background .4s,color .4s}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse at 20% 20%,rgba(var(--ar),.05) 0%,transparent 50%),radial-gradient(ellipse at 80% 80%,rgba(var(--a2r),.05) 0%,transparent 50%),repeating-linear-gradient(0deg,transparent,transparent 40px,rgba(var(--ar),.015) 40px,rgba(var(--ar),.015) 41px),repeating-linear-gradient(90deg,transparent,transparent 40px,rgba(var(--ar),.015) 40px,rgba(var(--ar),.015) 41px);pointer-events:none;z-index:0}
+#app{position:relative;z-index:1;max-width:900px;margin:0 auto;padding:16px;padding-bottom:80px}
+
+.header{text-align:center;padding:24px 0 16px;border-bottom:1px solid var(--border);margin-bottom:20px}
+.header h1{font-family:'Orbitron',monospace;font-size:clamp(1.3rem,6vw,2rem);font-weight:900;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;letter-spacing:3px;filter:drop-shadow(0 0 16px rgba(var(--ar),.6))}
+.header p{color:var(--muted);font-size:.78rem;margin-top:5px;letter-spacing:2px;text-transform:uppercase}
+
+.tabs{display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;margin-bottom:18px;flex-wrap:wrap}
+.tab{flex:1;min-width:80px;padding:8px 6px;border:none;border-radius:6px;background:transparent;color:var(--muted);font-family:'Rajdhani',sans-serif;font-size:.78rem;font-weight:600;cursor:pointer;transition:all .3s;text-transform:uppercase;letter-spacing:1px;white-space:nowrap}
+.tab.active{background:linear-gradient(135deg,rgba(var(--ar),.2),rgba(var(--a2r),.1));color:var(--accent);border:1px solid rgba(var(--ar),.3);box-shadow:var(--glow)}
+.tab:active{opacity:.7}
+
+.panel{display:none}
+.panel.active{display:block;animation:fadeIn .3s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+.input-group{margin-bottom:14px}
+.input-group label{display:block;color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px}
+.input-row{display:flex;gap:8px;align-items:stretch}
+input[type=text],input[type=password],textarea,select{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:'Rajdhani',sans-serif;font-size:1rem;padding:10px 12px;outline:none;transition:border-color .3s,box-shadow .3s;-webkit-appearance:none}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 10px rgba(var(--ar),.2)}
+select option{background:var(--card)}
+
+.btn{padding:10px 16px;border:none;border-radius:6px;font-family:'Rajdhani',sans-serif;font-size:.9rem;font-weight:700;cursor:pointer;transition:all .2s;text-transform:uppercase;letter-spacing:1px;white-space:nowrap}
+.btn-primary{background:linear-gradient(135deg,var(--accent),rgba(var(--ar),.6));color:#000;box-shadow:var(--glow)}
+.btn-primary:active{filter:brightness(.85);transform:scale(.97)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-success{background:linear-gradient(135deg,var(--accent2),rgba(var(--a2r),.6));color:#000;box-shadow:var(--glow2)}
+.btn-success:active{filter:brightness(.85)}
+.btn-warn{background:rgba(255,204,0,.15);border:1px solid var(--warn);color:var(--warn)}
+.btn-warn:active{background:rgba(255,204,0,.3)}
+.btn-danger{background:rgba(255,80,80,.15);border:1px solid #ff5050;color:#ff5050}
+.btn-danger:active{background:rgba(255,80,80,.3)}
+.btn-sm{padding:7px 12px;font-size:.78rem}
+.actions-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px;transition:background .4s,border-color .4s}
+.card-title{font-family:'Orbitron',monospace;font-size:.7rem;color:var(--accent);text-transform:uppercase;letter-spacing:2px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.card-title::after{content:'';flex:1;height:1px;background:var(--border)}
+
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.info-item{display:flex;flex-direction:column;gap:2px}
+.info-label{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.info-value{font-size:.9rem;color:var(--text);word-break:break-all;font-weight:600}
+.info-full{grid-column:1/-1}
+.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:.72rem;font-weight:700;letter-spacing:1px}
+.badge-active{background:rgba(0,255,136,.15);color:#00ff88;border:1px solid rgba(0,255,136,.4)}
+
+/* COPY BTN — visible con color accent */
+.copy-btn{display:inline-flex;align-items:center;gap:4px;font-size:.72rem;padding:4px 10px;cursor:pointer;border-radius:5px;border:1px solid var(--accent);background:rgba(var(--ar),.15);color:var(--accent);margin-left:6px;font-weight:700;vertical-align:middle;white-space:nowrap;font-family:'Rajdhani',sans-serif}
+.copy-btn:active{background:rgba(var(--ar),.35)}
+
+.cat-header{display:flex;align-items:center;gap:8px;font-size:.82rem;font-weight:700;color:var(--accent);cursor:pointer;padding:9px 0;border-bottom:1px solid var(--border);user-select:none;text-transform:uppercase;letter-spacing:1px}
+.cat-header .chevron{transition:transform .3s;margin-left:auto;font-size:.65rem;color:var(--muted)}
+.cat-header.open .chevron{transform:rotate(180deg)}
+.cat-list{padding:6px 0;display:none}
+.cat-list.open{display:block}
+.cat-item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:6px;font-size:.85rem;cursor:pointer;gap:8px}
+.cat-item:active{background:rgba(var(--ar),.15)}
+
+.content-list{max-height:420px;overflow-y:auto}
+.content-item{display:flex;align-items:center;gap:10px;padding:10px;border-radius:6px;cursor:pointer;border-bottom:1px solid rgba(var(--ar),.08)}
+.content-item:active{background:rgba(var(--ar),.1)}
+.content-item .name{flex:1;font-size:.88rem}
+.status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.status-dot.online{background:#00ff88;box-shadow:0 0 6px #00ff88}
+.status-dot.offline{background:#ff5050}
+.status-dot.unknown{background:var(--muted)}
+
+.list-item{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:6px}
+.list-item .li-name{flex:1;font-size:.88rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.list-item .li-cat{font-size:.72rem;color:var(--muted)}
+.list-item-thumb{width:42px;height:42px;border-radius:4px;object-fit:cover;background:var(--border);flex-shrink:0}
+
+.log{background:#010d18;border:1px solid var(--border);border-radius:6px;padding:10px;font-family:monospace;font-size:.8rem;max-height:160px;overflow-y:auto;line-height:1.7}
+.log-ok{color:#00ff88}.log-err{color:#ff5050}.log-info{color:var(--accent)}.log-warn{color:var(--warn)}
+
+.spinner{display:inline-block;width:15px;height:15px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.tg-status{display:flex;align-items:center;gap:8px;font-size:.85rem;padding:8px 12px;border-radius:6px;background:var(--surface);border:1px solid var(--border);margin-top:10px}
+.tg-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.tg-dot.ok{background:#00ff88;box-shadow:0 0 6px #00ff88}
+.tg-dot.error{background:#ff5050}
+.tg-dot.idle{background:var(--muted)}
+
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;align-items:flex-end;justify-content:center;padding:0}
+.modal-overlay.active{display:flex}
+.modal{background:var(--card);border:1px solid var(--accent);border-radius:16px 16px 0 0;padding:20px 16px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:var(--glow);animation:slideUp .25s ease}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.modal h3{font-family:'Orbitron',monospace;font-size:.82rem;color:var(--accent);margin-bottom:14px}
+.modal-actions{display:flex;gap:10px;margin-top:16px;justify-content:flex-end}
+.season-item{padding:10px 12px;border-radius:6px;border:1px solid var(--border);margin-bottom:6px;cursor:pointer}
+.season-item:active{background:rgba(var(--ar),.08);border-color:var(--accent)}
+.ep-item{padding:8px 10px;font-size:.85rem;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:8px}
+.ep-item:active{background:rgba(var(--ar),.08)}
+
+.toast-container{position:fixed;bottom:70px;left:50%;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:8px;align-items:center;width:90%;max-width:340px}
+.toast{padding:10px 18px;border-radius:8px;font-size:.85rem;font-weight:600;animation:slideIn .3s ease;width:100%;text-align:center}
+.toast-ok{background:rgba(0,255,136,.15);border:1px solid #00ff88;color:#00ff88}
+.toast-err{background:rgba(255,80,80,.15);border:1px solid #ff5050;color:#ff5050}
+.toast-info{background:rgba(var(--ar),.15);border:1px solid var(--accent);color:var(--accent)}
+@keyframes slideIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+.days-red{color:#ff5050;font-weight:700}
+.days-orange{color:#ff8c00;font-weight:700}
+.days-green{color:#00ff88;font-weight:700}
+
+.empty-state{text-align:center;padding:36px 20px;color:var(--muted)}
+.empty-state .icon{font-size:2.8rem;margin-bottom:12px}
+.empty-state p{font-size:.9rem;line-height:1.6}
+
+/* SKIN FAB */
+.skin-fab{position:fixed;bottom:16px;right:16px;z-index:150;background:var(--card);border:2px solid var(--accent);border-radius:50px;padding:8px 16px;display:flex;align-items:center;gap:6px;box-shadow:var(--glow);cursor:pointer;font-family:'Orbitron',monospace;font-size:.62rem;color:var(--accent);text-transform:uppercase;letter-spacing:1px;transition:all .3s}
+.skin-fab:active{transform:scale(.95)}
+.skin-panel{position:fixed;bottom:62px;right:16px;z-index:149;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;display:none;gap:10px;flex-wrap:wrap;width:200px;box-shadow:0 4px 30px rgba(0,0,0,.6)}
+.skin-panel.open{display:flex;animation:fadeIn .2s ease}
+.skin-panel-title{width:100%;font-family:'Orbitron',monospace;font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px}
+.skin-btn{width:40px;height:40px;border-radius:50%;border:3px solid transparent;cursor:pointer;transition:all .2s;flex-shrink:0}
+.skin-btn:active{transform:scale(.88)}
+.skin-btn.active-skin{border-color:#fff;box-shadow:0 0 12px rgba(255,255,255,.5)}
+.skin-btn[data-skin=default]{background:linear-gradient(135deg,#00d4ff,#00ff88)}
+.skin-btn[data-skin=magenta]{background:linear-gradient(135deg,#ff00ff,#ff6bff)}
+.skin-btn[data-skin=matrix]{background:linear-gradient(135deg,#00ff41,#00cc33)}
+.skin-btn[data-skin=fire]{background:linear-gradient(135deg,#ff6b00,#ffaa00)}
+.skin-btn[data-skin=red]{background:linear-gradient(135deg,#ff0033,#ff4466)}
+.skin-btn[data-skin=gold]{background:linear-gradient(135deg,#ffd700,#ffec6e)}
+
+.history-item{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer;transition:background .2s}
+.history-item:active{background:rgba(var(--ar),.1)}
+.history-main{display:flex;flex-direction:column;gap:2px;margin-bottom:6px}
+.history-host{font-size:.82rem;font-weight:700;color:var(--accent);word-break:break-all}
+.history-user{font-size:.78rem;color:var(--muted)}
+.history-meta{display:flex;gap:10px;flex-wrap:wrap;font-size:.78rem;color:var(--text);margin-bottom:8px;align-items:center}
+.history-actions{display:flex;gap:8px}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="header">
+    <h1>🌟 JOX3 M3U VERIFIER</h1>
+    <p>Verificador Profesional de Listas IPTV</p>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('verify')">📡 Verificar</button>
+    <button class="tab" onclick="switchTab('explore')">📂 Explorar</button>
+    <button class="tab" onclick="switchTab('search')">🔎 Buscar</button>
+    <button class="tab" onclick="switchTab('mylist')">💾 Lista</button>
+    <button class="tab" onclick="switchTab('config')">⚙️ Config</button>
+  </div>
+
+  <!-- VERIFICAR -->
+  <div class="panel active" id="panel-verify">
+    <div class="card">
+      <div class="card-title">🔗 Enlace M3U</div>
+      <div class="input-group">
+        <label>URL M3U (get.php o /playlist/user/pass/m3u_plus)</label>
+        <input type="text" id="m3u-url" placeholder="http://servidor:8080/get.php?username=u&password=p&type=m3u_plus">
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="btn btn-primary" style="flex:1" onclick="verifyM3U()" id="btn-verify">✔ VERIFICAR</button>
+        <button class="btn btn-warn btn-sm" onclick="toggleHistory()" id="btn-history" title="Historial de listas">🕐 Historial</button>
+      </div>
+      <div id="history-panel" style="display:none;margin-bottom:8px">
+        <div class="card" style="margin-bottom:0;padding:12px">
+          <div class="card-title" style="margin-bottom:10px">🕐 Últimas 10 Listas Verificadas</div>
+          <div id="history-list"></div>
+        </div>
+      </div>
+      <div id="verify-log" class="log" style="display:none;margin-top:12px"></div>
+    </div>
+    <div id="result-section" style="display:none">
+      <div class="card">
+        <div class="card-title">💡 Información del Servidor</div>
+        <div class="info-grid" id="info-grid"></div>
+        <div class="actions-row">
+          <button class="btn btn-sm btn-warn" onclick="copyM3ULink()">📋 M3U</button>
+          <button class="btn btn-sm btn-warn" onclick="copyEPGLink()">📋 EPG</button>
+          <button class="btn btn-sm btn-warn" onclick="copyIPLink()">📋 IP</button>
+          <button class="btn btn-sm btn-success" onclick="sendToTelegram()">✈️ Telegram</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">📋 Categorías</div>
+        <div id="cats-section"></div>
+        <div class="actions-row" style="margin-top:10px">
+          <button class="btn btn-sm btn-primary" onclick="switchTab('explore')">📂 Explorar →</button>
+          <button class="btn btn-sm btn-primary" onclick="switchTab('search')">🔎 Buscar →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EXPLORAR -->
+  <div class="panel" id="panel-explore">
+    <div id="explore-no-session" class="card">
+      <div class="empty-state"><div class="icon">📡</div><p>Primero verifica una lista M3U en la pestaña <strong style="color:var(--accent)">Verificar</strong></p></div>
+    </div>
+    <div id="explore-content" style="display:none">
+      <div class="card">
+        <div class="card-title">📂 Tipo de Contenido</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+          <button class="btn btn-sm btn-warn" id="etype-live" onclick="loadExploreType('live')">📡 TV en Vivo</button>
+          <button class="btn btn-sm btn-warn" id="etype-series" onclick="loadExploreType('series')">🎬 Series</button>
+          <button class="btn btn-sm btn-warn" id="etype-vod" onclick="loadExploreType('vod')">🎥 Películas</button>
+        </div>
+        <div id="explore-cats"></div>
+      </div>
+      <div class="card" id="explore-items-card" style="display:none">
+        <div class="card-title" id="explore-items-title">Contenido</div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+          <input type="text" id="filter-input" placeholder="Filtrar..." style="flex:1;min-width:120px;padding:7px 10px;font-size:.85rem" oninput="filterItems()">
+          <span id="checking-status" style="font-size:.78rem;color:var(--muted)"></span>
+        </div>
+        <div class="content-list" id="content-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BUSCAR -->
+  <div class="panel" id="panel-search">
+    <div id="search-no-session" class="card">
+      <div class="empty-state"><div class="icon">🔎</div><p>Primero verifica una lista M3U en la pestaña <strong style="color:var(--accent)">Verificar</strong></p></div>
+    </div>
+    <div id="search-content" style="display:none">
+      <div class="card">
+        <div class="card-title">🔎 Buscar por Palabra Clave</div>
+        <div class="input-group">
+          <label>Tipo de contenido</label>
+          <select id="search-type">
+            <option value="live">📡 TV en Vivo</option>
+            <option value="series">🎬 Series</option>
+            <option value="vod">🎥 Películas</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label>Palabra clave</label>
+          <div class="input-row">
+            <input type="text" id="search-keyword" placeholder="Ej: Movistar, HBO, Breaking..." onkeydown="if(event.key==='Enter')doSearch()">
+            <button class="btn btn-primary" onclick="doSearch()" id="btn-search">🔎</button>
+          </div>
+        </div>
+        <div id="search-results" style="max-height:400px;overflow-y:auto"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MI LISTA -->
+  <div class="panel" id="panel-mylist">
+    <div class="card">
+      <div class="card-title">💾 Mi Lista <span id="list-count" style="color:var(--muted);font-size:.75rem;font-family:sans-serif">(0)</span></div>
+      <div class="actions-row" style="margin-bottom:12px">
+        <button class="btn btn-sm btn-success" onclick="downloadM3U()">⬇️ Descargar</button>
+        <button class="btn btn-sm btn-success" onclick="sendListToTelegram()">✈️ Telegram</button>
+        <button class="btn btn-sm btn-danger" onclick="clearList()">🗑️ Limpiar</button>
+      </div>
+      <div id="my-list-items">
+        <div class="empty-state"><div class="icon">📋</div><p>Tu lista está vacía.<br>Explora o busca contenido para añadir.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONFIG -->
+  <div class="panel" id="panel-config">
+    <div class="card">
+      <div class="card-title">✈️ Telegram</div>
+      <div class="input-group"><label>Token del Bot</label><input type="password" id="tg-token" placeholder="123456:ABC..."></div>
+      <div class="input-group"><label>Chat ID</label><input type="text" id="tg-chatid" placeholder="942555986"></div>
+      <div class="actions-row">
+        <button class="btn btn-primary" onclick="testTelegram()">🧪 Probar</button>
+        <button class="btn btn-success" onclick="saveTgConfig()">💾 Guardar</button>
+      </div>
+      <div id="tg-status-wrap"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">🎨 Tema Visual</div>
+      <p style="color:var(--muted);font-size:.82rem;margin-bottom:14px">Toca un color para cambiar el tema. Se guarda automáticamente.</p>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+        <button class="skin-btn" data-skin="default" onclick="setSkin('default')" title="Cyan"></button>
+        <button class="skin-btn" data-skin="magenta" onclick="setSkin('magenta')" title="Magenta"></button>
+        <button class="skin-btn" data-skin="matrix" onclick="setSkin('matrix')" title="Matrix"></button>
+        <button class="skin-btn" data-skin="fire" onclick="setSkin('fire')" title="Fuego"></button>
+        <button class="skin-btn" data-skin="red" onclick="setSkin('red')" title="Rojo"></button>
+        <button class="skin-btn" data-skin="gold" onclick="setSkin('gold')" title="Dorado"></button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <span style="font-size:.72rem;color:var(--muted)">🔵 Cyan &nbsp; 🟣 Magenta &nbsp; 🟢 Matrix &nbsp; 🟠 Fuego &nbsp; 🔴 Rojo &nbsp; 🟡 Dorado</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">ℹ️ Acerca de</div>
+      <div style="color:var(--muted);font-size:.88rem;line-height:1.9">
+        <p>🌟 <strong style="color:var(--accent)">JOX3 M3U Verifier</strong> v1.1</p>
+        <p style="font-size:.78rem;margin-top:6px">✅ APK Android — sin CORS<br>✅ HTTP y HTTPS<br>✅ Xtream Codes API<br>✅ Series/temporadas/episodios<br>✅ Telegram con miniaturas<br>✅ 6 temas neón</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <h3>➕ Añadir a Mi Lista</h3>
+    <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:14px">
+      <img id="modal-thumb" src="" style="width:72px;height:72px;object-fit:cover;border-radius:6px;background:var(--border);flex-shrink:0" onerror="this.style.display='none'">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:1rem;margin-bottom:4px;word-break:break-word" id="modal-name"></div>
+        <div style="font-size:.8rem;color:var(--muted)" id="modal-type"></div>
+        <div style="font-size:.82rem;margin-top:6px;line-height:1.5" id="modal-synopsis"></div>
+      </div>
+    </div>
+    <div id="modal-series-section" style="display:none">
+      <div style="font-family:'Orbitron',monospace;font-size:.7rem;color:var(--accent);margin-bottom:10px;text-transform:uppercase;letter-spacing:1px">📚 Temporadas</div>
+      <button class="btn btn-sm btn-primary" style="margin-bottom:10px;width:100%" onclick="addWholeSeries()">📚 Añadir serie completa</button>
+      <div id="modal-seasons"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" onclick="closeModal()">✖ Cancelar</button>
+      <button class="btn btn-success" id="modal-add-btn" onclick="confirmAdd()">✅ Añadir</button>
+    </div>
+  </div>
+</div>
+
+<!-- SKIN PANEL + FAB -->
+<div class="skin-panel" id="skin-panel">
+  <div class="skin-panel-title">🎨 Tema</div>
+  <button class="skin-btn" data-skin="default"  onclick="setSkin('default')"  title="Cyan"></button>
+  <button class="skin-btn" data-skin="magenta"  onclick="setSkin('magenta')"  title="Magenta"></button>
+  <button class="skin-btn" data-skin="matrix"   onclick="setSkin('matrix')"   title="Matrix"></button>
+  <button class="skin-btn" data-skin="fire"     onclick="setSkin('fire')"     title="Fuego"></button>
+  <button class="skin-btn" data-skin="red"      onclick="setSkin('red')"      title="Rojo"></button>
+  <button class="skin-btn" data-skin="gold"     onclick="setSkin('gold')"     title="Dorado"></button>
+</div>
+<button class="skin-fab" onclick="toggleSkinPanel()">🎨 Tema</button>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script>
+const S={session:null,myList:[],thumbnails:[],currentType:'live',currentItems:[],currentStatuses:{},tgToken:'',tgChatId:'',pendingItem:null,pendingSeriesInfo:null,_searchItems:[],_searchType:'live',_renderedItems:[]};
+
+// ═══ SKINS ═══
+const SKIN_NAMES={default:'🔵 Cyan',magenta:'🟣 Magenta',matrix:'🟢 Matrix',fire:'🟠 Fuego',red:'🔴 Rojo',gold:'🟡 Dorado'};
+function setSkin(skin,save=true){
+  document.body.className=skin==='default'?'':`skin-${skin}`;
+  document.querySelectorAll('.skin-btn').forEach(b=>b.classList.toggle('active-skin',b.dataset.skin===skin));
+  if(save){
+    try{const cfg=JSON.parse(localStorage.getItem('jox3cfg')||'{}');cfg.skin=skin;localStorage.setItem('jox3cfg',JSON.stringify(cfg));}catch{}
+    toast(`🎨 ${SKIN_NAMES[skin]}`,'info');
+  }
+  document.getElementById('skin-panel').classList.remove('open');
+}
+function toggleSkinPanel(){document.getElementById('skin-panel').classList.toggle('open')}
+document.addEventListener('click',e=>{
+  const p=document.getElementById('skin-panel'),f=document.querySelector('.skin-fab');
+  if(!p.contains(e.target)&&!f.contains(e.target))p.classList.remove('open');
+});
+
+// ═══ UTILS ═══
+function switchTab(id){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  const ids=['verify','explore','search','mylist','config'];
+  document.querySelectorAll('.tab')[ids.indexOf(id)].classList.add('active');
+  document.getElementById('panel-'+id).classList.add('active');
+}
+function log(msg,type='info',clear=false){
+  const el=document.getElementById('verify-log');
+  el.style.display='block';
+  if(clear)el.innerHTML='';
+  el.innerHTML+=`<div class="log-${type}">${msg}</div>`;
+  el.scrollTop=el.scrollHeight;
+}
+function toast(msg,type='info'){
+  const c=document.getElementById('toast-container'),t=document.createElement('div');
+  t.className=`toast toast-${type}`;t.textContent=msg;c.appendChild(t);
+  setTimeout(()=>t.remove(),3000);
+}
+async function apiGet(url){
+  const res=await fetch(url,{headers:{'User-Agent':'VLC/3.0.0'},credentials:'omit'});
+  if(!res.ok)throw new Error(`HTTP ${res.status}`);
+  const text=await res.text();
+  try{return JSON.parse(text);}catch{throw new Error('Respuesta no es JSON válido');}
+}
+function parseM3UUrl(url){
+  const re=/(https?:\/\/[^/]+)\/playlist\/([^/]+)\/([^/]+)\/m3u_plus/;
+  const m=url.match(re);
+  if(m)return{host:m[1],username:m[2],password:m[3]};
+  try{
+    const u=new URL(url);
+    const username=u.searchParams.get('username'),password=u.searchParams.get('password');
+    if(!username||!password)return null;
+    return{host:u.origin,username,password};
+  }catch{return null;}
+}
+function semaforo(d){if(d===null)return'';if(d<0)return'🔴';if(d<10)return'🔴';if(d<20)return'🟠';return'🟢';}
+function daysClass(d){if(d===null)return'';if(d<10)return'days-red';if(d<20)return'days-orange';return'days-green';}
+function formatTs(ts){if(!ts||ts==='0')return'N/A';return new Date(parseInt(ts)*1000).toLocaleDateString('es-ES',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}
+function flagEmoji(code){if(!code||code.length!==2)return'';return[...code.toUpperCase()].map(c=>String.fromCodePoint(0x1F1E6+c.charCodeAt(0)-65)).join('');}
+function copyText(txt){
+  if(navigator.clipboard){navigator.clipboard.writeText(txt).then(()=>toast('📋 Copiado','ok'));}
+  else{const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast('📋 Copiado','ok');}
+}
+function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// ═══ VERIFICAR ═══
+async function verifyM3U(){
+  const url=document.getElementById('m3u-url').value.trim();
+  if(!url){toast('Ingresa una URL M3U','err');return;}
+  const parsed=parseM3UUrl(url);
+  if(!parsed){toast('URL inválida','err');return;}
+  const btn=document.getElementById('btn-verify');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Verificando...';
+  document.getElementById('result-section').style.display='none';
+  log('🔗 Conectando con el servidor...','info',true);
+  const{host,username,password}=parsed;
+  const apiUrl=`${host}/player_api.php?username=${username}&password=${password}`;
+  try{
+    log('⏳ Obteniendo información de la API...','warn');
+    const data=await apiGet(apiUrl);
+    if(!data.user_info)throw new Error('Respuesta inválida (user_info no encontrado)');
+    const ui=data.user_info;
+    if(ui.status!=='Active')throw new Error(`Cuenta inactiva. Estado: ${ui.status}`);
+    log('✅ Cuenta activa! Cargando categorías...','ok');
+    const[live,series,vod]=await Promise.all([
+      apiGet(`${apiUrl}&action=get_live_categories`).catch(()=>[]),
+      apiGet(`${apiUrl}&action=get_series_categories`).catch(()=>[]),
+      apiGet(`${apiUrl}&action=get_vod_categories`).catch(()=>[]),
+    ]);
+    log(`✅ 📡 ${live.length} Live | 🎬 ${series.length} Series | 🎥 ${vod.length} VOD`,'ok');
+    let geo={},ipLink='N/A';
+    try{
+      const ipRes=await fetch(`http://ip-api.com/json/${new URL(host).hostname}?fields=status,timezone,city,country,countryCode,isp,query`);
+      const ipData=await ipRes.json();
+      if(ipData.status==='success'){
+        geo=ipData;
+        if(ipData.query&&ipData.query!==new URL(host).hostname){
+          const u=new URL(host);const port=u.port?`:${u.port}`:'';
+          ipLink=`${u.protocol}//${ipData.query}${port}/get.php?username=${username}&password=${password}&type=m3u_plus`;
+        }
+      }
+    }catch{}
+    const m3uLink=`${host}/get.php?username=${username}&password=${password}&type=m3u_plus`;
+    const epgLink=`${host}/xmltv.php?username=${username}&password=${password}`;
+    S.session={host,username,password,apiUrl,userInfo:ui,categories:{live,series,vod},m3uLink,epgLink,geo,ipLink};
+    log('✅ Verificación completada con éxito!','ok');
+    saveToHistory(S.session);
+    renderResult(ui,geo,live,series,vod,m3uLink,epgLink);
+    document.getElementById('result-section').style.display='block';
+    document.getElementById('explore-no-session').style.display='none';
+    document.getElementById('explore-content').style.display='block';
+    document.getElementById('search-no-session').style.display='none';
+    document.getElementById('search-content').style.display='block';
+  }catch(e){log(`❌ Error: ${e.message}`,'err');toast('Error: '+e.message,'err');}
+  btn.disabled=false;btn.innerHTML='✔ VERIFICAR';
+}
+
+function renderResult(ui,geo,live,series,vod,m3uLink,epgLink){
+  const expDate=ui.exp_date&&ui.exp_date!=='0'?new Date(parseInt(ui.exp_date)*1000):null;
+  const expStr=expDate?expDate.toLocaleDateString('es-ES'):'Ilimitado';
+  const remDays=expDate?Math.floor((expDate-Date.now())/86400000):null;
+  const flag=flagEmoji(geo.countryCode||'');
+  const ipLink=S.session.ipLink||'N/A';
+  document.getElementById('info-grid').innerHTML=`
+    <div class="info-item"><span class="info-label">🌐 Host</span><span class="info-value">${escHtml(S.session.host)}</span></div>
+    <div class="info-item"><span class="info-label">👤 Usuario</span><span class="info-value">${escHtml(S.session.username)}</span></div>
+    <div class="info-item"><span class="info-label">🔑 Contraseña</span><span class="info-value">${escHtml(S.session.password)}</span></div>
+    <div class="info-item"><span class="info-label">🟢 Estado</span><span class="info-value"><span class="badge badge-active">${ui.status}</span></span></div>
+    <div class="info-item"><span class="info-label">🔗 Conexiones</span><span class="info-value">${ui.active_cons||0} / ${ui.max_connections||0}</span></div>
+    <div class="info-item"><span class="info-label">📅 Creado</span><span class="info-value">${formatTs(ui.created_at)}</span></div>
+    <div class="info-item"><span class="info-label">🗓️ Vence</span><span class="info-value">${expStr}</span></div>
+    <div class="info-item"><span class="info-label">⌛ Días restantes</span><span class="info-value ${daysClass(remDays)}">${remDays!==null?remDays:'N/A'} ${semaforo(remDays)}</span></div>
+    <div class="info-item"><span class="info-label">🕒 Timezone</span><span class="info-value">${geo.timezone||'N/A'}</span></div>
+    <div class="info-item"><span class="info-label">📍 Ubicación</span><span class="info-value">${flag} ${[geo.city,geo.country].filter(Boolean).join(', ')||'N/A'}</span></div>
+    <div class="info-item"><span class="info-label">🏢 ISP</span><span class="info-value">${geo.isp||'N/A'}</span></div>
+    <div class="info-item"><span class="info-label">🧪 Trial</span><span class="info-value">${ui.is_trial==='1'?'Sí ⚠️':'No'}</span></div>
+    <div class="info-item"><span class="info-label">🎞️ Formatos</span><span class="info-value">${(ui.allowed_output_formats||[]).join(', ')||'N/A'}</span></div>
+    <div class="info-item"><span class="info-label">📡 TV en Vivo</span><span class="info-value" style="color:var(--accent)">${live.length} categorías</span></div>
+    <div class="info-item"><span class="info-label">🎬 Series</span><span class="info-value" style="color:var(--accent)">${series.length} categorías</span></div>
+    <div class="info-item"><span class="info-label">🎥 Películas</span><span class="info-value" style="color:var(--accent)">${vod.length} categorías</span></div>
+    <div class="info-item info-full">
+      <span class="info-label">📺 Enlace M3U</span>
+      <span class="info-value" style="font-size:.75rem">${escHtml(m3uLink)}</span>
+    </div>
+    <div class="info-item info-full">
+      <span class="info-label">📜 Enlace EPG</span>
+      <span class="info-value" style="font-size:.75rem">${escHtml(epgLink)}</span>
+    </div>
+    <div class="info-item info-full">
+      <span class="info-label">📌 M3U por IP</span>
+      <span class="info-value" style="font-size:.75rem">${ipLink!=='N/A'?escHtml(ipLink):'<span style="color:var(--muted)">N/A</span>'}</span>
+    </div>`;
+  document.getElementById('cats-section').innerHTML=
+    renderCatBlock('📡 TV en Vivo',live,'live')+
+    renderCatBlock('🎬 Series',series,'series')+
+    renderCatBlock('🎥 Películas',vod,'vod');
+}
+
+function renderCatBlock(title,cats,type){
+  if(!cats.length)return'';
+  const items=cats.slice(0,60).map(c=>{
+    const name=typeof c==='string'?c:(c.category_name||'Sin nombre');
+    const id=typeof c==='object'?(c.category_id||''):'';
+    return`<div class="cat-item" onclick="gotoExplore('${type}','${id}')">${escHtml(name)} <span style="color:var(--muted);font-size:.7rem">→</span></div>`;
+  }).join('');
+  return`<div style="margin-bottom:8px">
+    <div class="cat-header" onclick="toggleCat(this)">${title} <span style="color:var(--muted);font-size:.75rem">(${cats.length})</span><span class="chevron">▼</span></div>
+    <div class="cat-list">${items}</div>
+  </div>`;
+}
+function toggleCat(el){el.classList.toggle('open');el.nextElementSibling.classList.toggle('open');}
+function gotoExplore(type,catId){switchTab('explore');loadExploreType(type,catId);}
+function copyM3ULink(){if(S.session)copyText(S.session.m3uLink);}
+function copyEPGLink(){if(S.session)copyText(S.session.epgLink);}
+function copyIPLink(){if(S.session&&S.session.ipLink!=='N/A')copyText(S.session.ipLink);else toast('IP no disponible','err');}
+
+// ═══ EXPLORAR ═══
+async function loadExploreType(type,catId=null){
+  if(!S.session)return;
+  S.currentType=type;S.currentItems=[];S.currentStatuses={};
+  ['live','series','vod'].forEach(t=>document.getElementById('etype-'+t).className='btn btn-sm btn-warn');
+  document.getElementById('etype-'+type).className='btn btn-sm btn-primary';
+  const cats=S.session.categories[type]||[];
+  document.getElementById('explore-cats').innerHTML=cats.map((c,i)=>{
+    const name=c.category_name||'Sin nombre',id=c.category_id||i;
+    return`<div class="cat-item" onclick="loadCategory('${id}','${escHtml(name)}')">${escHtml(name)} <span style="color:var(--muted);font-size:.7rem">→</span></div>`;
+  }).join('')||'<div style="color:var(--muted);padding:10px">Sin categorías</div>';
+  document.getElementById('explore-items-card').style.display='none';
+  if(catId){const cat=cats.find(c=>String(c.category_id)===String(catId));if(cat)loadCategory(catId,cat.category_name||'Categoría');}
+}
+
+async function loadCategory(catId,catName){
+  if(!S.session)return;
+  const type=S.currentType;
+  document.getElementById('explore-items-title').textContent=catName;
+  document.getElementById('explore-items-card').style.display='block';
+  const listEl=document.getElementById('content-list');
+  listEl.innerHTML='<div style="text-align:center;padding:20px;color:var(--muted)"><span class="spinner"></span> Cargando...</div>';
+  const am={live:'get_live_streams',series:'get_series',vod:'get_vod_streams'};
+  try{
+    const data=await apiGet(`${S.session.apiUrl}&action=${am[type]}&category_id=${catId}`);
+    S.currentItems=Array.isArray(data)?data:[];S.currentStatuses={};
+    document.getElementById('filter-input').value='';
+    document.getElementById('checking-status').textContent=`${S.currentItems.length} elementos`;
+    renderContentList(S.currentItems);
+  }catch(e){listEl.innerHTML=`<div style="color:#ff5050;padding:10px">❌ ${e.message}</div>`;}
+}
+
+function renderContentList(items){
+  const listEl=document.getElementById('content-list');
+  if(!items.length){listEl.innerHTML='<div style="color:var(--muted);padding:10px">Sin contenido</div>';return;}
+  S._renderedItems=items;
+  const isLive=S.currentType==='live';
+  listEl.innerHTML=items.map((item,idx)=>{
+    const name=item.name||item.title||'Sin nombre';
+    const id=item.stream_id||item.series_id||0;
+    const st=S.currentStatuses[id];
+    const dotClass=st===true?'online':st===false?'offline':'unknown';
+    // Status badge at end of name for live channels
+    const statusBadge=isLive?(
+      st===true?'<span style="color:#00ff88;font-size:.85rem;flex-shrink:0">✅</span>':
+      st===false?'<span style="color:#ff5050;font-size:.85rem;flex-shrink:0">❌</span>':
+      '<span style="color:var(--muted);font-size:.75rem;flex-shrink:0" id="sbadge-'+id+'">⏳</span>'
+    ):'';
+    return`<div class="content-item" onclick="openModalByIndex(${idx},'${S.currentType}')">
+      <div class="status-dot ${dotClass}" id="dot-${id}"></div>
+      <div class="name">${escHtml(name)}</div>
+      ${statusBadge}
+      <button class="btn btn-sm btn-success" onclick="event.stopPropagation();openModalByIndex(${idx},'${S.currentType}')">+</button>
+    </div>`;
+  }).join('');
+  // Auto-check live streams in background
+  if(isLive) checkAllStreamsBackground(items);
+}
+
+async function checkAllStreamsBackground(items){
+  const{host,username,password}=S.session;
+  // Process in batches of 8 to avoid overwhelming
+  const batch=8;
+  for(let i=0;i<items.length;i+=batch){
+    const slice=items.slice(i,i+batch);
+    await Promise.all(slice.map(async item=>{
+      const id=item.stream_id;
+      if(S.currentStatuses[id]!==undefined)return; // already known
+      const url=`${host}/live/${username}/${password}/${id}.ts`;
+      try{
+        const ctrl=new AbortController();
+        const timer=setTimeout(()=>ctrl.abort(),5000);
+        const res=await fetch(url,{method:'HEAD',signal:ctrl.signal,mode:'no-cors'});
+        clearTimeout(timer);
+        S.currentStatuses[id]=res.type!=='error';
+      }catch{
+        S.currentStatuses[id]=false;
+      }
+      // Update badge in DOM
+      const badge=document.getElementById('sbadge-'+id);
+      const dot=document.getElementById('dot-'+id);
+      const isOnline=S.currentStatuses[id];
+      if(badge){
+        badge.removeAttribute('id');
+        badge.textContent=isOnline?'✅':'❌';
+        badge.style.color=isOnline?'#00ff88':'#ff5050';
+        badge.style.fontSize='.85rem';
+      }
+      if(dot){
+        dot.className='status-dot '+(isOnline?'online':'offline');
+      }
+    }));
+  }
+}
+function filterItems(){
+  const kw=document.getElementById('filter-input').value.toLowerCase();
+  renderContentList(kw?S.currentItems.filter(i=>(i.name||i.title||'').toLowerCase().includes(kw)):S.currentItems);
+}
+
+// ═══ BUSCAR ═══
+async function doSearch(){
+  if(!S.session)return;
+  const type=document.getElementById('search-type').value;
+  const keyword=document.getElementById('search-keyword').value.trim();
+  if(!keyword){toast('Ingresa una palabra clave','err');return;}
+  const btn=document.getElementById('btn-search');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span>';
+  const resultsEl=document.getElementById('search-results');
+  resultsEl.innerHTML='<div style="color:var(--muted);padding:10px;text-align:center"><span class="spinner"></span> Buscando...</div>';
+  const am={live:'get_live_streams',series:'get_series',vod:'get_vod_streams'};
+  try{
+    const data=await apiGet(`${S.session.apiUrl}&action=${am[type]}`);
+    const items=Array.isArray(data)?data:[];
+    const matches=items.filter(i=>(i.name||i.title||'').toLowerCase().includes(keyword.toLowerCase()));
+    S._searchItems=matches;S._searchType=type;
+    if(!matches.length){
+      resultsEl.innerHTML=`<div style="color:var(--muted);padding:10px">Sin resultados para "${escHtml(keyword)}"</div>`;
+    }else{
+      S._renderedItems=matches;
+      const isLiveSearch=type==='live';
+      resultsEl.innerHTML=`<div style="color:#00ff88;font-size:.8rem;margin-bottom:8px;padding:0 4px">✅ ${matches.length} resultados</div>`+
+        matches.map((item,idx)=>{
+          const sid=item.stream_id||0;
+          const st=S.currentStatuses[sid];
+          const badge=isLiveSearch?(
+            st===true?'<span style="color:#00ff88;flex-shrink:0">✅</span>':
+            st===false?'<span style="color:#ff5050;flex-shrink:0">❌</span>':
+            '<span style="color:var(--muted);font-size:.75rem;flex-shrink:0" id="sbadge-'+sid+'">⏳</span>'
+          ):'';
+          return`<div class="content-item" onclick="openModalByIndex(${idx},'${type}')">
+            <div class="name">${escHtml(item.name||'Sin nombre')}</div>
+            ${badge}
+            <button class="btn btn-sm btn-success" onclick="event.stopPropagation();openModalByIndex(${idx},'${type}')">+</button>
+          </div>`;
+        }).join('');
+      // Auto-check live search results in background
+      if(isLiveSearch) checkAllStreamsBackground(matches);
+    }
+  }catch(e){resultsEl.innerHTML=`<div style="color:#ff5050;padding:10px">❌ ${e.message}</div>`;}
+  btn.disabled=false;btn.innerHTML='🔎';
+}
+
+// ═══ MODAL ═══
+function openModalByIndex(idx, type){
+  const item = S._renderedItems && S._renderedItems[idx];
+  if(!item){toast('Error: item no encontrado','err');return;}
+  openModal(item, type);
+}
+async function openModal(item,type){
+  S.pendingItem={item,type};S.pendingSeriesInfo=null;
+  document.getElementById('modal-name').textContent=item.name||item.title||'Sin nombre';
+  document.getElementById('modal-type').textContent={live:'📡 TV en Vivo',series:'🎬 Serie',vod:'🎥 Película'}[type];
+  // Show stream status in modal for live channels
+  const streamId=item.stream_id||item.series_id||0;
+  const knownStatus=S.currentStatuses[streamId];
+  const statusLine=type==='live'?(
+    knownStatus===true?' ✅ Online':
+    knownStatus===false?' ❌ Offline':
+    ' ⏳ Verificando...'
+  ):'';
+  document.getElementById('modal-synopsis').textContent='⏳ Cargando...';
+  document.getElementById('modal-type').textContent=({live:'📡 TV en Vivo',series:'🎬 Serie',vod:'🎥 Película'}[type])+statusLine;
+  document.getElementById('modal-thumb').src=item.stream_icon||item.cover||'';
+  document.getElementById('modal-thumb').style.display='block';
+  document.getElementById('modal-series-section').style.display='none';
+  document.getElementById('modal-add-btn').style.display='inline-flex';
+  document.getElementById('modal-overlay').classList.add('active');
+  try{
+    let info={};const{apiUrl}=S.session;
+    if(type==='vod')info=await apiGet(`${apiUrl}&action=get_vod_info&vod_id=${item.stream_id}`);
+    else if(type==='series')info=await apiGet(`${apiUrl}&action=get_series_info&series_id=${item.series_id}`);
+    else info=await apiGet(`${apiUrl}&action=get_short_epg&stream_id=${item.stream_id}&limit=1`).catch(()=>({}));
+    const inf=info.info||{};
+    const synopsis=inf.plot||inf.description||'Sin sinopsis disponible.';
+    const thumb=inf.cover_big||inf.movie_image||item.stream_icon||item.cover||'';
+    document.getElementById('modal-synopsis').textContent=synopsis;
+    if(thumb){document.getElementById('modal-thumb').src=thumb;}
+    S.pendingItem.info=info;S.pendingItem.synopsis=synopsis;S.pendingItem.thumbnail=thumb;
+    if(type==='series'&&info.episodes){
+      S.pendingSeriesInfo=info;
+      document.getElementById('modal-series-section').style.display='block';
+      document.getElementById('modal-add-btn').style.display='none';
+      const eps=info.episodes||{};
+      document.getElementById('modal-seasons').innerHTML=Object.keys(eps).map(snum=>{
+        const epList=eps[snum];
+        return`<div class="season-item" onclick="toggleSeason('s-${snum}')">
+          📚 Temporada ${snum} — ${epList.length} episodios
+          <div id="s-${snum}" style="display:none;margin-top:10px">
+            <button class="btn btn-sm btn-warn" style="width:100%;margin-bottom:6px" onclick="event.stopPropagation();addSeason('${snum}')">Añadir T${snum} completa</button>
+            ${epList.map((ep,i)=>`<div class="ep-item" onclick="event.stopPropagation();addEpisode('${snum}',${i})">📖 Ep.${i+1} ${escHtml(ep.title||'')}</div>`).join('')}
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }catch(e){document.getElementById('modal-synopsis').textContent='Sin información disponible.';}
+}
+function toggleSeason(id){const el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'block':'none';}
+function closeModal(){document.getElementById('modal-overlay').classList.remove('active');}
+function confirmAdd(){
+  if(!S.pendingItem)return;
+  const{item,type,synopsis,thumbnail}=S.pendingItem;
+  const{host,username,password}=S.session;
+  let url='';
+  if(type==='live')url=`${host}/live/${username}/${password}/${item.stream_id}.ts`;
+  else if(type==='series')url=`${host}/series/${username}/${password}/${item.series_id}.m3u8`;
+  else url=`${host}/movie/${username}/${password}/${item.stream_id}.mp4`;
+  addToList({name:item.name||item.title||'Sin nombre',url,category:{live:'TV en Vivo',series:'Series',vod:'Películas'}[type],synopsis,thumbnail});
+  closeModal();
+}
+function addWholeSeries(){
+  const{item,synopsis,thumbnail}=S.pendingItem;const{host,username,password}=S.session;
+  addToList({name:item.name||'Serie',url:`${host}/series/${username}/${password}/${item.series_id}.m3u8`,category:'Series',synopsis,thumbnail});
+  closeModal();
+}
+function addSeason(snum){
+  const{item,synopsis,thumbnail}=S.pendingItem;const{host,username,password}=S.session;
+  const eps=S.pendingSeriesInfo.episodes[snum]||[];
+  eps.forEach((ep,i)=>addToList({name:`${item.name} T${snum}E${i+1}${ep.title?' - '+ep.title:''}`,url:`${host}/series/${username}/${password}/${ep.id}.${ep.container_extension||'mkv'}`,category:'Series',synopsis,thumbnail}));
+  toast(`✅ T${snum} añadida (${eps.length} eps)`,'ok');closeModal();
+}
+function addEpisode(snum,epIdx){
+  const{item,synopsis,thumbnail}=S.pendingItem;const{host,username,password}=S.session;
+  const ep=S.pendingSeriesInfo.episodes[snum][epIdx];
+  addToList({name:`${item.name} T${snum}E${epIdx+1}${ep.title?' - '+ep.title:''}`,url:`${host}/series/${username}/${password}/${ep.id}.${ep.container_extension||'mkv'}`,category:'Series',synopsis,thumbnail});
+  closeModal();
+}
+document.getElementById('modal-overlay').addEventListener('click',e=>{if(e.target.id==='modal-overlay')closeModal();});
+
+// ═══ HISTORIAL ═══
+function toggleHistory(){
+  const panel=document.getElementById('history-panel');
+  const isOpen=panel.style.display!=='none';
+  if(isOpen){panel.style.display='none';return;}
+  renderHistory();
+  panel.style.display='block';
+}
+
+function getHistory(){
+  try{return JSON.parse(localStorage.getItem('jox3history')||'[]');}catch{return[];}
+}
+
+function saveToHistory(session){
+  try{
+    const hist=getHistory();
+    const entry={
+      url:session.m3uLink,
+      host:session.host,
+      username:session.username,
+      password:session.password,
+      status:session.userInfo.status,
+      expDate:session.userInfo.exp_date||'',
+      live:session.categories.live.length,
+      series:session.categories.series.length,
+      vod:session.categories.vod.length,
+      geo:session.geo?.country||'',
+      flag:flagEmoji(session.geo?.countryCode||''),
+      ts:Date.now()
+    };
+    // Avoid duplicates by host+user
+    const filtered=hist.filter(h=>!(h.host===entry.host&&h.username===entry.username));
+    filtered.unshift(entry);
+    localStorage.setItem('jox3history',JSON.stringify(filtered.slice(0,10)));
+  }catch{}
+}
+
+function renderHistory(){
+  const hist=getHistory();
+  const el=document.getElementById('history-list');
+  if(!hist.length){
+    el.innerHTML='<div style="color:var(--muted);font-size:.85rem;padding:8px 0">No hay listas guardadas aún.</div>';
+    return;
+  }
+  el.innerHTML=hist.map((h,i)=>{
+    const expDate=h.expDate&&h.expDate!=='0'?new Date(parseInt(h.expDate)*1000):null;
+    const remDays=expDate?Math.floor((expDate-Date.now())/86400000):null;
+    const sem=semaforo(remDays);
+    const dateStr=new Date(h.ts).toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'});
+    return`<div class="history-item" onclick="loadFromHistory(${i})">
+      <div class="history-main">
+        <span class="history-host">${escHtml(h.host)}</span>
+        <span class="history-user">👤 ${escHtml(h.username)}</span>
+      </div>
+      <div class="history-meta">
+        <span>${h.flag} ${escHtml(h.geo)}</span>
+        <span>📡${h.live} 🎬${h.series} 🎥${h.vod}</span>
+        <span class="${daysClass(remDays)}">${remDays!==null?remDays+'d':''} ${sem}</span>
+        <span style="color:var(--muted);font-size:.7rem">${dateStr}</span>
+      </div>
+      <div class="history-actions">
+        <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();loadFromHistory(${i})">↩ Cargar</button>
+        <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteHistory(${i})">✖</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function loadFromHistory(idx){
+  const hist=getHistory();
+  const h=hist[idx];
+  if(!h)return;
+  const m3uUrl=`${h.host}/get.php?username=${h.username}&password=${h.password}&type=m3u_plus`;
+  document.getElementById('m3u-url').value=m3uUrl;
+  document.getElementById('history-panel').style.display='none';
+  toast('↩ URL cargada — toca Verificar','info');
+}
+
+function deleteHistory(idx){
+  try{
+    const hist=getHistory();
+    hist.splice(idx,1);
+    localStorage.setItem('jox3history',JSON.stringify(hist));
+    renderHistory();
+    if(!hist.length)document.getElementById('history-panel').style.display='none';
+    toast('🗑️ Eliminado del historial','info');
+  }catch{}
+}
+
+// Load saved config + skin (after all functions defined)
+(function(){
+  try{
+    const cfg=JSON.parse(localStorage.getItem('jox3cfg')||'{}');
+    if(cfg.token){S.tgToken=cfg.token;document.getElementById('tg-token').value=S.tgToken;}
+    if(cfg.chatId){S.tgChatId=cfg.chatId;document.getElementById('tg-chatid').value=S.tgChatId;}
+    if(cfg.skin)setSkin(cfg.skin,false);
+  }catch(e){}
+})();
+
+// ═══ MI LISTA ═══
+function addToList(entry){
+  S.myList.push(entry);
+  S.thumbnails.push({name:entry.name,url:entry.thumbnail||'',description:`*${entry.name}*\n${entry.category}\n${entry.synopsis||''}`});
+  renderMyList();toast(`✅ ${entry.name}`,'ok');
+}
+function renderMyList(){
+  document.getElementById('list-count').textContent=`(${S.myList.length})`;
+  const el=document.getElementById('my-list-items');
+  if(!S.myList.length){el.innerHTML='<div class="empty-state"><div class="icon">📋</div><p>Tu lista está vacía.<br>Explora o busca contenido para añadir.</p></div>';return;}
+  el.innerHTML=S.myList.map((item,i)=>`
+    <div class="list-item">
+      <img class="list-item-thumb" src="${item.thumbnail||''}" onerror="this.style.display='none'">
+      <div style="flex:1;min-width:0"><div class="li-name">${escHtml(item.name)}</div><div class="li-cat">${item.category}</div></div>
+      <button class="btn btn-sm btn-danger" onclick="removeFromList(${i})">✖</button>
+    </div>`).join('');
+}
+function removeFromList(idx){S.myList.splice(idx,1);S.thumbnails.splice(idx,1);renderMyList();}
+function clearList(){
+  if(!S.myList.length)return;if(!confirm('¿Limpiar toda la lista?'))return;
+  S.myList=[];S.thumbnails=[];renderMyList();toast('Lista limpiada','info');
+}
+function downloadM3U(){
+  if(!S.myList.length){toast('La lista está vacía','err');return;}
+  let c='#EXTM3U\n';
+  S.myList.forEach(item=>{c+=`#EXTINF:-1 category="${item.category}",${item.name}\n${item.url}\n`;});
+  const blob=new Blob([c],{type:'audio/x-mpegurl'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=`ListaJOX3_${new Date().toISOString().slice(0,10)}.m3u`;a.click();
+  toast('📥 Lista descargada','ok');
+}
+
+// ═══ TELEGRAM ═══
+function escapeMd(text){
+  if(!text)return'';
+  return String(text).replace(/[_*`[]/g, c=>'\\'+c);
+}
+function getTg(){return{token:document.getElementById('tg-token').value.trim()||S.tgToken,chatId:document.getElementById('tg-chatid').value.trim()||S.tgChatId};}
+async function tgSendText(token,chatId,text){
+  const MAX=4096,parts=[];
+  for(let i=0;i<text.length;i+=MAX)parts.push(text.slice(i,i+MAX));
+  for(const part of parts){
+    const res=await fetch(`https://api.telegram.org/bot${token}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:chatId,text:part})});
+    if(!res.ok){const e=await res.json();throw new Error(e.description||'Error Telegram');}
+  }
+}
+async function tgSendPhoto(token,chatId,photoUrl,caption){
+  await fetch(`https://api.telegram.org/bot${token}/sendPhoto`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:chatId,photo:photoUrl,caption:caption.slice(0,1024)})});
+}
+async function tgSendDoc(token,chatId,content,filename){
+  const blob=new Blob([content],{type:'text/plain'}),fd=new FormData();
+  fd.append('chat_id',chatId);fd.append('document',blob,filename);
+  const res=await fetch(`https://api.telegram.org/bot${token}/sendDocument`,{method:'POST',body:fd});
+  if(!res.ok){const e=await res.json();throw new Error(e.description||'Error enviando archivo');}
+}
+async function sendToTelegram(){
+  if(!S.session){toast('Primero verifica una lista','err');return;}
+  const{token,chatId}=getTg();
+  if(!token||!chatId){toast('Configura Telegram primero','err');switchTab('config');return;}
+  const{userInfo:ui,host,username,password,m3uLink,epgLink,geo,categories:cats,ipLink}=S.session;
+
+  // Dates formatted like the script: YYYY-MM-DD HH:MM
+  function fmtDate(ts){
+    if(!ts||ts==='0')return'Ilimitado';
+    const d=new Date(parseInt(ts)*1000);
+    const pad=n=>String(n).padStart(2,'0');
+    return`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function fmtNow(){
+    const d=new Date();
+    const pad=n=>String(n).padStart(2,'0');
+    return`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  const expDate=ui.exp_date&&ui.exp_date!=='0'?new Date(parseInt(ui.exp_date)*1000):null;
+  const remDays=expDate?Math.floor((expDate-Date.now())/86400000):null;
+  const flag=flagEmoji(geo?.countryCode||'');
+  const tzFlag=flagEmoji(geo?.countryCode||'');
+  const formats=(ui.allowed_output_formats||[]).join(', ')||'N/A';
+  const isTrial=ui.is_trial==='1'?'Sí':'No';
+
+  // Build category name lists
+  function catNames(arr){
+    if(!arr||!arr.length)return'N/A';
+    return arr.map(c=>typeof c==='string'?c:(c.category_name||'Sin nombre')).join(', ');
+  }
+
+  // Build full message — split in parts if needed (Telegram max 4096 chars)
+  const part1=`🎉 === Resultado M3U por JOX3 === 🎉
+
+`+
+    `🌐 Host: ${host}
+`+
+    `👤 Usuario: ${username}
+`+
+    `🔑 Contraseña: ${password}
+`+
+    `🟢 Estado: ${ui.status}
+`+
+    `🔗 Conexiones: ${ui.active_cons||0}/${ui.max_connections||0}
+`+
+    `📅 Creado: ${fmtDate(ui.created_at)}
+`+
+    `🗓️ Vencimiento: ${fmtDate(ui.exp_date)}
+`+
+    `⌛ Días restantes: ${remDays!==null?remDays:'N/A'} ${semaforo(remDays)}
+`+
+    `🕒 Timezone: ${geo?.timezone||'N/A'} ${tzFlag}
+`+
+    `📍 Ubicación: ${flag} ${[geo?.city,geo?.country].filter(Boolean).join(', ')||'N/A'}
+`+
+    `🏢 ISP: ${geo?.isp||'N/A'}
+`+
+    `🧪 Prueba: ${isTrial}
+`+
+    `🎞️ Formatos: ${formats}
+`+
+    `📺 Enlace M3U: ${m3uLink}
+`+
+    `📜 Enlace EPG: ${epgLink}
+`+
+    `📌 M3U por IP: ${ipLink||'N/A'}
+`;
+
+  const liveNames=catNames(cats.live);
+  const seriesNames=catNames(cats.series);
+  const vodNames=catNames(cats.vod);
+
+  const part2=`
+📡 TV en vivo (${cats.live.length}): ${liveNames}`;
+  const part3=`
+🎬 Series (${cats.series.length}): ${seriesNames}`;
+  const part4=`
+🎥 Películas (${cats.vod.length}): ${vodNames}`;
+  const part5=`
+
+📅 Escaneado: ${fmtNow()}`;
+
+  // Smart split: never cut mid-word, respect 4096 limit
+  const MAX=4096;
+  const allParts=[];
+  let current=part1;
+
+  // Try to append categories one by one — split if exceeds limit
+  for(const chunk of[part2,part3,part4,part5]){
+    if((current+chunk).length<=MAX){
+      current+=chunk;
+    }else{
+      // Need to split — send what we have, start new message
+      allParts.push(current);
+      // If chunk itself is too long, split at comma
+      if(chunk.length>MAX){
+        const lines=chunk.match(/.{1,4000}(,|$)/g)||[chunk];
+        for(const line of lines) allParts.push(line.trim());
+        current='';
+      }else{
+        current=chunk;
+      }
+    }
+  }
+  if(current.trim()) allParts.push(current);
+
+  try{
+    toast('📤 Enviando...','info');
+    for(const msg of allParts){
+      if(msg.trim()) await tgSendText(token,chatId,msg);
+    }
+    toast(`✅ Enviado (${allParts.length} mensaje${allParts.length>1?'s':''})`, 'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+}
+async function sendListToTelegram(){
+  if(!S.myList.length){toast('La lista está vacía','err');return;}
+  const{token,chatId}=getTg();
+  if(!token||!chatId){toast('Configura Telegram primero','err');switchTab('config');return;}
+  try{
+    toast('📤 Enviando lista...','info');
+    let c='#EXTM3U\n';S.myList.forEach(item=>{c+=`#EXTINF:-1 category="${item.category}",${item.name}\n${item.url}\n`;});
+    await tgSendDoc(token,chatId,c,`ListaJOX3_${new Date().toISOString().slice(0,10)}.m3u`);
+    toast('✅ Lista enviada','ok');
+    let sent=0;
+    for(const thumb of S.thumbnails){if(thumb.url){await tgSendPhoto(token,chatId,thumb.url,thumb.description);sent++;}}
+    if(sent)toast(`✅ ${sent} miniaturas enviadas`,'ok');
+  }catch(e){toast('❌ '+e.message,'err');}
+}
+async function testTelegram(){
+  const{token,chatId}=getTg();
+  const wrap=document.getElementById('tg-status-wrap');
+  wrap.innerHTML='<div class="tg-status"><span class="tg-dot idle"></span> <span class="spinner"></span> Probando...</div>';
+  try{
+    await tgSendText(token,chatId,'🌟 *JOX3 M3U Verifier* — Conexión exitosa ✅');
+    wrap.innerHTML='<div class="tg-status"><span class="tg-dot ok"></span> ✅ Conexión exitosa</div>';
+    toast('✅ Telegram OK','ok');
+  }catch(e){
+    wrap.innerHTML=`<div class="tg-status"><span class="tg-dot error"></span> ❌ ${e.message}</div>`;
+    toast('❌ Error Telegram','err');
+  }
+}
+function saveTgConfig(){
+  S.tgToken=document.getElementById('tg-token').value.trim();
+  S.tgChatId=document.getElementById('tg-chatid').value.trim();
+  try{const cfg=JSON.parse(localStorage.getItem('jox3cfg')||'{}');cfg.token=S.tgToken;cfg.chatId=S.tgChatId;localStorage.setItem('jox3cfg',JSON.stringify(cfg));}catch{}
+  toast('💾 Guardado','ok');
+}
+</script>
+</body>
+</html>
