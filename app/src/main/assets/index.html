@@ -64,7 +64,7 @@ body{background:var(--bg);color:var(--text);font-family:'Rajdhani',sans-serif;fo
 body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse at 20% 20%,rgba(var(--ar),.05) 0%,transparent 50%),radial-gradient(ellipse at 80% 80%,rgba(var(--a2r),.05) 0%,transparent 50%),repeating-linear-gradient(0deg,transparent,transparent 40px,rgba(var(--ar),.015) 40px,rgba(var(--ar),.015) 41px),repeating-linear-gradient(90deg,transparent,transparent 40px,rgba(var(--ar),.015) 40px,rgba(var(--ar),.015) 41px);pointer-events:none;z-index:0}
 #app{position:relative;z-index:1;max-width:900px;margin:0 auto;padding:16px;padding-bottom:80px}
 
-.header{text-align:center;padding:24px 0 16px;border-bottom:1px solid var(--border);margin-bottom:20px}
+.header{position:relative;text-align:center;padding:24px 0 16px;border-bottom:1px solid var(--border);margin-bottom:20px}
 .header h1{font-family:'Orbitron',monospace;font-size:clamp(1.3rem,6vw,2rem);font-weight:900;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;letter-spacing:3px;filter:drop-shadow(0 0 16px rgba(var(--ar),.6))}
 .header p{color:var(--muted);font-size:.78rem;margin-top:5px;letter-spacing:2px;text-transform:uppercase}
 
@@ -173,10 +173,10 @@ select option{background:var(--card)}
 .empty-state .icon{font-size:2.8rem;margin-bottom:12px}
 .empty-state p{font-size:.9rem;line-height:1.6}
 
-/* SKIN FAB */
-.skin-fab{position:fixed;bottom:16px;right:16px;z-index:150;background:var(--card);border:2px solid var(--accent);border-radius:50px;padding:8px 16px;display:flex;align-items:center;gap:6px;box-shadow:var(--glow);cursor:pointer;font-family:'Orbitron',monospace;font-size:.62rem;color:var(--accent);text-transform:uppercase;letter-spacing:1px;transition:all .3s}
-.skin-fab:active{transform:scale(.95)}
-.skin-panel{position:fixed;bottom:62px;right:16px;z-index:149;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;display:none;gap:10px;flex-wrap:wrap;width:200px;box-shadow:0 4px 30px rgba(0,0,0,.6)}
+/* TEMA — botón reubicado dentro del header (ya no flota fijo sobre el contenido) */
+.theme-btn{position:absolute;top:20px;right:0;width:38px;height:38px;border-radius:50%;background:var(--card);border:2px solid var(--accent);box-shadow:var(--glow);display:flex;align-items:center;justify-content:center;font-size:1rem;cursor:pointer;z-index:150}
+.theme-btn:active{transform:scale(.9)}
+.skin-panel{position:absolute;top:64px;right:0;z-index:149;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;display:none;gap:10px;flex-wrap:wrap;width:200px;box-shadow:0 4px 30px rgba(0,0,0,.6)}
 .skin-panel.open{display:flex;animation:fadeIn .2s ease}
 .skin-panel-title{width:100%;font-family:'Orbitron',monospace;font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px}
 .skin-btn{width:40px;height:40px;border-radius:50%;border:3px solid transparent;cursor:pointer;transition:all .2s;flex-shrink:0}
@@ -188,6 +188,18 @@ select option{background:var(--card)}
 .skin-btn[data-skin=fire]{background:linear-gradient(135deg,#ff7c00,#00d4ff)}
 .skin-btn[data-skin=red]{background:linear-gradient(135deg,#ff2244,#ff9500)}
 .skin-btn[data-skin=gold]{background:linear-gradient(135deg,#ffc400,#00bfa5)}
+
+/* EXPLORAR — categorías tipo acordeón (se abren en el mismo lugar) */
+.cat-block{border-bottom:1px solid var(--border)}
+.cat-header-x{display:flex;align-items:center;gap:8px;padding:11px 4px;cursor:pointer;font-size:.85rem;font-weight:600}
+.cat-header-x .chevron{margin-left:auto;transition:transform .3s;color:var(--muted);font-size:.7rem}
+.cat-header-x.open .chevron{transform:rotate(180deg);color:var(--accent)}
+.cat-body-x{max-height:0;overflow:hidden;transition:max-height .35s ease}
+.cat-body-x.open{max-height:2000px}
+.cat-body-inner{padding:6px 4px 14px}
+
+/* REPRODUCTOR — botón ▶ en cada item */
+.btn-play{background:rgba(var(--ar),.18);border:1px solid var(--accent);color:var(--accent)}
 
 .history-item{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer;transition:background .2s}
 .history-item:active{background:rgba(var(--ar),.1)}
@@ -203,8 +215,18 @@ select option{background:var(--card)}
 <body>
 <div id="app">
   <header class="header">
+    <button class="theme-btn" onclick="toggleSkinPanel()">🎨</button>
     <h1>🌟 JOX3 M3U VERIFIER</h1>
     <p>Verificador Profesional de Listas IPTV</p>
+    <div class="skin-panel" id="skin-panel">
+      <div class="skin-panel-title">🎨 Tema</div>
+      <button class="skin-btn" data-skin="default"  onclick="setSkin('default')"  title="Cyan"></button>
+      <button class="skin-btn" data-skin="magenta"  onclick="setSkin('magenta')"  title="Magenta"></button>
+      <button class="skin-btn" data-skin="matrix"   onclick="setSkin('matrix')"   title="Matrix"></button>
+      <button class="skin-btn" data-skin="fire"     onclick="setSkin('fire')"     title="Fuego"></button>
+      <button class="skin-btn" data-skin="red"      onclick="setSkin('red')"      title="Rojo"></button>
+      <button class="skin-btn" data-skin="gold"     onclick="setSkin('gold')"     title="Dorado"></button>
+    </div>
   </header>
 
   <div class="tabs">
@@ -271,14 +293,6 @@ select option{background:var(--card)}
           <button class="btn btn-sm btn-warn" id="etype-vod" onclick="loadExploreType('vod')">🎥 Películas</button>
         </div>
         <div id="explore-cats"></div>
-      </div>
-      <div class="card" id="explore-items-card" style="display:none">
-        <div class="card-title" id="explore-items-title">Contenido</div>
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
-          <input type="text" id="filter-input" placeholder="Filtrar..." style="flex:1;min-width:120px;padding:7px 10px;font-size:.85rem" oninput="filterItems()">
-          <span id="checking-status" style="font-size:.78rem;color:var(--muted)"></span>
-        </div>
-        <div class="content-list" id="content-list"></div>
       </div>
     </div>
   </div>
@@ -387,17 +401,6 @@ select option{background:var(--card)}
   </div>
 </div>
 
-<!-- SKIN PANEL + FAB -->
-<div class="skin-panel" id="skin-panel">
-  <div class="skin-panel-title">🎨 Tema</div>
-  <button class="skin-btn" data-skin="default"  onclick="setSkin('default')"  title="Cyan"></button>
-  <button class="skin-btn" data-skin="magenta"  onclick="setSkin('magenta')"  title="Magenta"></button>
-  <button class="skin-btn" data-skin="matrix"   onclick="setSkin('matrix')"   title="Matrix"></button>
-  <button class="skin-btn" data-skin="fire"     onclick="setSkin('fire')"     title="Fuego"></button>
-  <button class="skin-btn" data-skin="red"      onclick="setSkin('red')"      title="Rojo"></button>
-  <button class="skin-btn" data-skin="gold"     onclick="setSkin('gold')"     title="Dorado"></button>
-</div>
-<button class="skin-fab" onclick="toggleSkinPanel()">🎨 Tema</button>
 
 <div class="toast-container" id="toast-container"></div>
 
@@ -417,7 +420,7 @@ function setSkin(skin,save=true){
 }
 function toggleSkinPanel(){document.getElementById('skin-panel').classList.toggle('open')}
 document.addEventListener('click',e=>{
-  const p=document.getElementById('skin-panel'),f=document.querySelector('.skin-fab');
+  const p=document.getElementById('skin-panel'),f=document.querySelector('.theme-btn');
   if(!p.contains(e.target)&&!f.contains(e.target))p.classList.remove('open');
 });
 
@@ -579,36 +582,62 @@ function copyM3ULink(){if(S.session)copyText(S.session.m3uLink);}
 function copyEPGLink(){if(S.session)copyText(S.session.epgLink);}
 function copyIPLink(){if(S.session&&S.session.ipLink!=='N/A')copyText(S.session.ipLink);else toast('IP no disponible','err');}
 
-// ═══ EXPLORAR ═══
+// ═══ EXPLORAR (acordeón: el contenido se despliega dentro de la misma categoría) ═══
+let exploreOpenIdx=null;
+
 async function loadExploreType(type,catId=null){
   if(!S.session)return;
-  S.currentType=type;S.currentItems=[];S.currentStatuses={};
+  S.currentType=type;S.currentItems=[];S.currentStatuses={};exploreOpenIdx=null;
   ['live','series','vod'].forEach(t=>document.getElementById('etype-'+t).className='btn btn-sm btn-warn');
   document.getElementById('etype-'+type).className='btn btn-sm btn-primary';
   const cats=S.session.categories[type]||[];
   document.getElementById('explore-cats').innerHTML=cats.map((c,i)=>{
     const name=c.category_name||'Sin nombre',id=c.category_id||i;
-    return`<div class="cat-item" onclick="loadCategory('${id}','${escHtml(name)}')">${escHtml(name)} <span style="color:var(--muted);font-size:.7rem">→</span></div>`;
+    return`<div class="cat-block">
+      <div class="cat-header-x" id="ehead-${i}" onclick="toggleExploreCat(${i},'${id}','${escHtml(name)}')">
+        <span>${escHtml(name)}</span><span class="chevron">▼</span>
+      </div>
+      <div class="cat-body-x" id="ebody-${i}"><div class="cat-body-inner" id="einner-${i}"></div></div>
+    </div>`;
   }).join('')||'<div style="color:var(--muted);padding:10px">Sin categorías</div>';
-  document.getElementById('explore-items-card').style.display='none';
-  if(catId){const cat=cats.find(c=>String(c.category_id)===String(catId));if(cat)loadCategory(catId,cat.category_name||'Categoría');}
+  if(catId){
+    const idx=cats.findIndex(c=>String(c.category_id)===String(catId));
+    if(idx>=0)toggleExploreCat(idx,catId,cats[idx].category_name||'Categoría');
+  }
 }
 
-async function loadCategory(catId,catName){
+function toggleExploreCat(idx,catId,catName){
+  if(exploreOpenIdx!==null&&exploreOpenIdx!==idx){
+    const ph=document.getElementById('ehead-'+exploreOpenIdx),pb=document.getElementById('ebody-'+exploreOpenIdx);
+    if(ph)ph.classList.remove('open');
+    if(pb)pb.classList.remove('open');
+  }
+  const head=document.getElementById('ehead-'+idx),body=document.getElementById('ebody-'+idx);
+  if(!head||!body)return;
+  const wasOpen=head.classList.contains('open');
+  if(wasOpen){head.classList.remove('open');body.classList.remove('open');exploreOpenIdx=null;return;}
+  head.classList.add('open');body.classList.add('open');exploreOpenIdx=idx;
+  loadCategory(catId,catName,idx);
+}
+
+async function loadCategory(catId,catName,idx){
   if(!S.session)return;
   const type=S.currentType;
-  document.getElementById('explore-items-title').textContent=catName;
-  document.getElementById('explore-items-card').style.display='block';
-  const listEl=document.getElementById('content-list');
-  listEl.innerHTML='<div style="text-align:center;padding:20px;color:var(--muted)"><span class="spinner"></span> Cargando...</div>';
+  const inner=document.getElementById('einner-'+idx);
+  if(!inner)return;
+  inner.innerHTML='<div style="text-align:center;padding:16px;color:var(--muted)"><span class="spinner"></span> Cargando...</div>';
   const am={live:'get_live_streams',series:'get_series',vod:'get_vod_streams'};
   try{
     const data=await apiGet(`${S.session.apiUrl}&action=${am[type]}&category_id=${catId}`);
     S.currentItems=Array.isArray(data)?data:[];S.currentStatuses={};
-    document.getElementById('filter-input').value='';
-    document.getElementById('checking-status').textContent=`${S.currentItems.length} elementos`;
+    inner.innerHTML=`
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <input type="text" id="filter-input" placeholder="Filtrar..." style="flex:1;min-width:120px;padding:7px 10px;font-size:.85rem" oninput="filterItems()">
+        <span id="checking-status" style="font-size:.78rem;color:var(--muted)">${S.currentItems.length} elementos</span>
+      </div>
+      <div class="content-list" id="content-list"></div>`;
     renderContentList(S.currentItems);
-  }catch(e){listEl.innerHTML=`<div style="color:#ff5050;padding:10px">❌ ${e.message}</div>`;}
+  }catch(e){inner.innerHTML=`<div style="color:#ff5050;padding:10px">❌ ${e.message}</div>`;}
 }
 
 function renderContentList(items){
@@ -631,6 +660,7 @@ function renderContentList(items){
       <div class="status-dot ${dotClass}" id="dot-${id}"></div>
       <div class="name">${escHtml(name)}</div>
       ${statusBadge}
+      <button class="btn btn-sm btn-play" onclick="event.stopPropagation();playItem(${idx},'${S.currentType}')">▶</button>
       <button class="btn btn-sm btn-success" onclick="event.stopPropagation();openModalByIndex(${idx},'${S.currentType}')">+</button>
     </div>`;
   }).join('');
@@ -734,6 +764,7 @@ async function doSearch(){
           return`<div class="content-item" onclick="openModalByIndex(${idx},'${type}')">
             <div class="name">${escHtml(item.name||'Sin nombre')}</div>
             ${badge}
+            <button class="btn btn-sm btn-play" onclick="event.stopPropagation();playItem(${idx},'${type}')">▶</button>
             <button class="btn btn-sm btn-success" onclick="event.stopPropagation();openModalByIndex(${idx},'${type}')">+</button>
           </div>`;
         }).join('');
@@ -743,6 +774,37 @@ async function doSearch(){
   }catch(e){resultsEl.innerHTML=`<div style="color:#ff5050;padding:10px">❌ ${e.message}</div>`;}
   btn.disabled=false;btn.innerHTML='🔎';
 }
+
+// ═══ REPRODUCTOR (nativo, ExoPlayer vía Kotlin) ═══
+// window.NativePlayer.play(url, titulo, categoria) abre un Activity nativo con
+// ExoPlayer. Al reproducir así, no pasa por el WebView y no hay límite de CORS
+// ni de formatos que el navegador no soporte.
+function playItem(idx,type){
+  const item=S._renderedItems&&S._renderedItems[idx];
+  if(!item){toast('Error: item no encontrado','err');return;}
+  const{host,username,password}=S.session;
+  const name=item.name||item.title||'Sin nombre';
+  const category={live:'TV en Vivo',series:'Series',vod:'Películas'}[type];
+  if(type==='series'){
+    // Una serie tiene varios episodios: mejor abrir el modal para elegir cuál.
+    toast('Elige un episodio para reproducir','info');
+    openModalByIndex(idx,type);
+    return;
+  }
+  const url=type==='live'
+    ?`${host}/live/${username}/${password}/${item.stream_id}.ts`
+    :`${host}/movie/${username}/${password}/${item.stream_id}.mp4`;
+  if(window.NativePlayer&&window.NativePlayer.play){
+    window.NativePlayer.play(url,name,category);
+  }else{
+    toast('Reproductor nativo no disponible aquí (solo funciona en la app instalada)','err');
+  }
+}
+// Llamado desde Kotlin cuando el usuario toca "Añadir a Mi Lista" dentro del
+// reproductor nativo, para que el item quede también en la lista de la app.
+window.onNativeAddToList=function(name,url,category){
+  addToList({name,url,category,synopsis:'',thumbnail:''});
+};
 
 // ═══ MODAL ═══
 function openModalByIndex(idx, type){
