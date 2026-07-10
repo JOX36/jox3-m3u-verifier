@@ -638,37 +638,60 @@ function renderContentList(items){
   if(isLive) checkAllStreamsBackground(items);
 }
 
+// ═══ VERIFICACIÓN REAL DE CANALES ═══
+// window.onStreamChecked es invocado por Kotlin (puente NativeChecker) cuando
+// termina de comprobar un canal con una petición HTTP real (sin CORS, porque
+// la hace el lado nativo, no el navegador). También se usa en el fallback.
+window.onStreamChecked=function(id,online){
+  S.currentStatuses[id]=online;
+  const badge=document.getElementById('sbadge-'+id);
+  const dot=document.getElementById('dot-'+id);
+  if(badge){
+    badge.removeAttribute('id');
+    badge.textContent=online?'✅':'❌';
+    badge.style.color=online?'#00ff88':'#ff5050';
+    badge.style.fontSize='.85rem';
+  }
+  if(dot){
+    dot.className='status-dot '+(online?'online':'offline');
+  }
+};
+
 async function checkAllStreamsBackground(items){
   const{host,username,password}=S.session;
-  // Process in batches of 8 to avoid overwhelming
+  const hasNative=!!(window.NativeChecker&&window.NativeChecker.checkStream);
+
+  if(hasNative){
+    // ✅ Verificación real: Kotlin hace la petición HTTP (sin límite de CORS,
+    // porque CORS solo aplica dentro del navegador/WebView, no del lado nativo).
+    // Devuelve el código de estado real, no una respuesta "opaca".
+    items.forEach(item=>{
+      const id=item.stream_id;
+      if(S.currentStatuses[id]!==undefined)return; // ya se conoce
+      const url=`${host}/live/${username}/${password}/${id}.ts`;
+      window.NativeChecker.checkStream(url,String(id));
+    });
+    return;
+  }
+
+  // ⚠️ Fallback si se abre fuera de la app (navegador normal sin puente nativo).
+  // Con mode:'no-cors' el navegador siempre devuelve un objeto "opaco" salvo que
+  // falle la red, así que esto es solo una aproximación, no una verificación real.
   const batch=8;
   for(let i=0;i<items.length;i+=batch){
     const slice=items.slice(i,i+batch);
     await Promise.all(slice.map(async item=>{
       const id=item.stream_id;
-      if(S.currentStatuses[id]!==undefined)return; // already known
+      if(S.currentStatuses[id]!==undefined)return;
       const url=`${host}/live/${username}/${password}/${id}.ts`;
       try{
         const ctrl=new AbortController();
         const timer=setTimeout(()=>ctrl.abort(),5000);
         const res=await fetch(url,{method:'HEAD',signal:ctrl.signal,mode:'no-cors'});
         clearTimeout(timer);
-        S.currentStatuses[id]=res.type!=='error';
+        window.onStreamChecked(id,res.type!=='error');
       }catch{
-        S.currentStatuses[id]=false;
-      }
-      // Update badge in DOM
-      const badge=document.getElementById('sbadge-'+id);
-      const dot=document.getElementById('dot-'+id);
-      const isOnline=S.currentStatuses[id];
-      if(badge){
-        badge.removeAttribute('id');
-        badge.textContent=isOnline?'✅':'❌';
-        badge.style.color=isOnline?'#00ff88':'#ff5050';
-        badge.style.fontSize='.85rem';
-      }
-      if(dot){
-        dot.className='status-dot '+(isOnline?'online':'offline');
+        window.onStreamChecked(id,false);
       }
     }));
   }
