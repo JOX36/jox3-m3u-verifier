@@ -133,12 +133,10 @@ class MainActivity : AppCompatActivity() {
 
     inner class NativePlayer {
         @JavascriptInterface
-        fun play(url: String, title: String, category: String) {
+        fun play(payloadJson: String) {
             runOnUiThread {
                 val intent = Intent(this@MainActivity, PlayerActivity::class.java)
-                intent.putExtra("url", url)
-                intent.putExtra("title", title)
-                intent.putExtra("category", category)
+                intent.putExtra("payload", payloadJson)
                 startActivity(intent)
             }
         }
