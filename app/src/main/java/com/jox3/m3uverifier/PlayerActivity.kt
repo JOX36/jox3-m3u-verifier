@@ -72,6 +72,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private val accent = Color.parseColor("#00d4ff")
     private val muted = Color.parseColor("#4a7a99")
+    private var currentResizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -144,7 +145,7 @@ class PlayerActivity : AppCompatActivity() {
         playerView = PlayerView(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             useController = false
-            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM // llena toda la pantalla, sin franjas negras a los lados
+            resizeMode = currentResizeMode
             setOnClickListener { toggleControls() }
         }
         root.addView(playerView)
@@ -208,6 +209,7 @@ class PlayerActivity : AppCompatActivity() {
         bottom.addView(iconButton(R.drawable.ic_copy) { copyUrl() })
         bottom.addView(plusButton { addToList() })
         bottom.addView(iconButton(R.drawable.ic_next) { next() })
+        bottom.addView(iconButton(R.drawable.ic_aspect) { cycleResizeMode() })
         bottom.addView(iconButton(R.drawable.ic_pip) { enterPip() })
         bottomBar = bottom
         root.addView(bottom)
@@ -325,6 +327,22 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun retry() = loadCurrent()
+
+    // Cicla: llenar pantalla (recorta bordes) → ver todo (puede dejar franjas) → estirar (sin recortes ni franjas, pero deforma un poco la imagen)
+    private fun cycleResizeMode() {
+        currentResizeMode = when (currentResizeMode) {
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+            AspectRatioFrameLayout.RESIZE_MODE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+            else -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        }
+        playerView.resizeMode = currentResizeMode
+        val label = when (currentResizeMode) {
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "🖼 Llenar pantalla (puede recortar bordes)"
+            AspectRatioFrameLayout.RESIZE_MODE_FIT -> "🖼 Ver todo el video (puede haber franjas negras)"
+            else -> "🖼 Estirar para llenar (sin recortes ni franjas)"
+        }
+        Toast.makeText(this, label, Toast.LENGTH_SHORT).show()
+    }
 
     private fun prev() {
         if (items.isEmpty()) return
