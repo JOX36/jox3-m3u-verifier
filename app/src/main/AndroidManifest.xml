@@ -22,5 +22,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".PlayerActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme"
+            android:configChanges="orientation|screenSize|keyboardHidden"/>
+
     </application>
 </manifest>
