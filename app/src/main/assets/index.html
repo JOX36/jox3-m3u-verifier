@@ -863,7 +863,11 @@ async function openModal(item,type){
           📚 Temporada ${snum} — ${epList.length} episodios
           <div id="s-${snum}" style="display:none;margin-top:10px">
             <button class="btn btn-sm btn-warn" style="width:100%;margin-bottom:6px" onclick="event.stopPropagation();addSeason('${snum}')">Añadir T${snum} completa</button>
-            ${epList.map((ep,i)=>`<div class="ep-item" onclick="event.stopPropagation();addEpisode('${snum}',${i})">📖 Ep.${i+1} ${escHtml(ep.title||'')}</div>`).join('')}
+            ${epList.map((ep,i)=>`<div class="ep-item" style="justify-content:space-between">
+              <span style="flex:1" onclick="event.stopPropagation()">📖 Ep.${i+1} ${escHtml(ep.title||'')}</span>
+              <button class="btn btn-sm btn-play" onclick="event.stopPropagation();playEpisode('${snum}',${i})">▶</button>
+              <button class="btn btn-sm btn-success" onclick="event.stopPropagation();addEpisode('${snum}',${i})">+</button>
+            </div>`).join('')}
           </div>
         </div>`;
       }).join('');
@@ -899,6 +903,17 @@ function addEpisode(snum,epIdx){
   const ep=S.pendingSeriesInfo.episodes[snum][epIdx];
   addToList({name:`${item.name} T${snum}E${epIdx+1}${ep.title?' - '+ep.title:''}`,url:`${host}/series/${username}/${password}/${ep.id}.${ep.container_extension||'mkv'}`,category:'Series',synopsis,thumbnail});
   closeModal();
+}
+function playEpisode(snum,epIdx){
+  const{item}=S.pendingItem;const{host,username,password}=S.session;
+  const ep=S.pendingSeriesInfo.episodes[snum][epIdx];
+  const name=`${item.name} T${snum}E${epIdx+1}${ep.title?' - '+ep.title:''}`;
+  const url=`${host}/series/${username}/${password}/${ep.id}.${ep.container_extension||'mkv'}`;
+  if(window.NativePlayer&&window.NativePlayer.play){
+    window.NativePlayer.play(url,name,'Series');
+  }else{
+    toast('Reproductor nativo no disponible aquí (solo funciona en la app instalada)','err');
+  }
 }
 document.getElementById('modal-overlay').addEventListener('click',e=>{if(e.target.id==='modal-overlay')closeModal();});
 
