@@ -8,13 +8,17 @@ import android.content.Context
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Base64
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -24,6 +28,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -34,13 +39,9 @@ import java.util.concurrent.Executors
 data class PlaylistItem(val name: String, val url: String, val streamId: String, val isLive: Boolean)
 
 /**
- * Reproductor nativo (ExoPlayer/Media3), de borde a borde, con barra de
- * controles estilo JOX3TV. No usa layouts XML: la UI se construye por código,
- * igual que MainActivity.
- *
- * Recibe del WebView un JSON ("payload") con la lista completa de canales/
- * episodios de la categoría actual — así ⏮/⏭ se manejan aquí mismo, sin ir y
- * volver al WebView cada vez que cambias de canal.
+ * Reproductor nativo (ExoPlayer/Media3), de borde a borde de verdad (modo
+ * inmersivo, sin barras del sistema), con controles circulares flotantes que
+ * se ocultan solos tras unos segundos — igual que cualquier player de video.
  */
 class PlayerActivity : AppCompatActivity() {
 
@@ -52,7 +53,7 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var resBadge: TextView
     private lateinit var liveBadge: TextView
     private lateinit var epgView: TextView
-    private lateinit var playBtnRef: TextView
+    private lateinit var playIcon: ImageView
 
     private var items: List<PlaylistItem> = emptyList()
     private var currentIndex = 0
@@ -60,22 +61,45 @@ class PlayerActivity : AppCompatActivity() {
     private var category: String = ""
     private val netExecutor = Executors.newSingleThreadExecutor()
 
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private val hideControlsRunnable = Runnable { hideControls() }
+    private val AUTO_HIDE_MS = 4000L
+    private var controlsVisible = true
+
     companion object {
-        // MainActivity lo asigna antes de lanzar este Activity, para poder
-        // avisarle al WebView cuando el usuario toque "Añadir a Mi Lista".
         var onAddToList: ((name: String, url: String, category: String) -> Unit)? = null
     }
 
-    private val bg = Color.parseColor("#020b18")
     private val accent = Color.parseColor("#00d4ff")
     private val muted = Color.parseColor("#4a7a99")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        hideSystemBars()
 
         parsePayload(intent.getStringExtra("payload") ?: "{}")
         buildUi()
         loadCurrent()
+        scheduleHideControls()
+    }
+
+    // ═══ MODO INMERSIVO — borde a borde de verdad, sin barra de estado ni de navegación ═══
+    @Suppress("DEPRECATION")
+    private fun hideSystemBars() {
+        window.decorView.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            or View.SYSTEM_UI_FLAG_FULLSCREEN
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemBars()
     }
 
     private fun parsePayload(payload: String) {
@@ -104,7 +128,6 @@ class PlayerActivity : AppCompatActivity() {
             items = emptyList()
         }
         if (items.isEmpty()) {
-            // Por si algo llega sin playlist completo, al menos no se rompe.
             items = listOf(PlaylistItem("Canal", "", "", false))
             currentIndex = 0
         }
@@ -120,21 +143,24 @@ class PlayerActivity : AppCompatActivity() {
 
         playerView = PlayerView(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            useController = false // controles propios (barra estilo JOX3TV), no los default de ExoPlayer
+            useController = false
+            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM // llena toda la pantalla, sin franjas negras a los lados
+            setOnClickListener { toggleControls() }
         }
         root.addView(playerView)
 
-        // ═══ BARRA SUPERIOR: cerrar, nombre, resolución real, en vivo ═══
+        // ═══ BARRA SUPERIOR (degradado que se difumina hacia el video, no un bloque sólido) ═══
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(22), dp(16), dp(28))
-            setBackgroundColor(Color.parseColor("#B3020b18"))
+            setPadding(dp(16), dp(16), dp(16), dp(36))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.parseColor("#CC020b18"), Color.parseColor("#00020b18")))
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.TOP
             }
         }
-        top.addView(circleButton("←") { finish() })
+        top.addView(iconButton(R.drawable.ic_back) { finish() })
         titleView = TextView(this).apply {
             setTextColor(accent)
             textSize = 15f
@@ -145,15 +171,12 @@ class PlayerActivity : AppCompatActivity() {
             }
         }
         top.addView(titleView)
-        resBadge = TextView(this).apply {
-            setTextColor(accent); textSize = 10f
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-        }
+        resBadge = TextView(this).apply { setTextColor(accent); textSize = 10f; setPadding(dp(8), dp(4), dp(8), dp(4)) }
         top.addView(resBadge)
         liveBadge = TextView(this).apply {
             setTextColor(Color.parseColor("#ff3355")); textSize = 11f
             setTypeface(typeface, Typeface.BOLD)
-            text = "🔴 EN VIVO"
+            text = "● EN VIVO"
             visibility = View.GONE
             setPadding(dp(8), 0, 0, 0)
         }
@@ -161,31 +184,31 @@ class PlayerActivity : AppCompatActivity() {
         topBar = top
         root.addView(top)
 
-        // Línea de EPG ("qué está pasando ahora"), debajo de la barra superior
         epgView = TextView(this).apply {
             setTextColor(muted); textSize = 12f
-            setPadding(dp(20), dp(78), dp(20), 0)
+            setPadding(dp(20), dp(74), dp(20), 0)
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         root.addView(epgView)
 
-        // ═══ BARRA INFERIOR: ⏮ reintentar ⏸/▶ copiar añadir ⏭ pip ═══
+        // ═══ BARRA INFERIOR ═══
         val bottom = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(dp(6), dp(20), dp(6), dp(28))
-            setBackgroundColor(Color.parseColor("#B3020b18"))
+            setPadding(dp(6), dp(28), dp(6), dp(24))
+            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+                intArrayOf(Color.parseColor("#CC020b18"), Color.parseColor("#00020b18")))
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.BOTTOM
             }
         }
-        bottom.addView(circleButton("⏮") { prev() })
-        bottom.addView(circleButton("🔄") { retry() })
-        bottom.addView(circleButtonPrimary("⏸") { togglePlay() })
-        bottom.addView(circleButton("📋") { copyUrl() })
-        bottom.addView(circleButton("➕") { addToList() })
-        bottom.addView(circleButton("⏭") { next() })
-        bottom.addView(circleButton("▣") { enterPip() })
+        bottom.addView(iconButton(R.drawable.ic_prev) { prev() })
+        bottom.addView(iconButton(R.drawable.ic_reload) { retry() })
+        bottom.addView(iconButtonPrimary(R.drawable.ic_pause) { togglePlay() })
+        bottom.addView(iconButton(R.drawable.ic_copy) { copyUrl() })
+        bottom.addView(plusButton { addToList() })
+        bottom.addView(iconButton(R.drawable.ic_next) { next() })
+        bottom.addView(iconButton(R.drawable.ic_pip) { enterPip() })
         bottomBar = bottom
         root.addView(bottom)
 
@@ -194,34 +217,72 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    private fun circleButton(label: String, onClick: () -> Unit): TextView {
-        return TextView(this).apply {
-            text = label
-            setTextColor(Color.parseColor("#c8e8ff"))
-            textSize = 16f
-            gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#661a2f45"))
-            layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
-                marginStart = dp(4); marginEnd = dp(4)
-            }
-            setOnClickListener { onClick() }
+    private fun circleDrawable(colorInt: Int): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(colorInt)
+    }
+
+    private fun iconButton(iconRes: Int, onClick: () -> Unit): ImageView {
+        return ImageView(this).apply {
+            setImageResource(iconRes)
+            background = circleDrawable(Color.parseColor("#661a2f45"))
+            val pad = dp(9)
+            setPadding(pad, pad, pad, pad)
+            layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply { marginStart = dp(4); marginEnd = dp(4) }
+            setOnClickListener { onClick(); scheduleHideControls() }
         }
     }
 
-    private fun circleButtonPrimary(label: String, onClick: () -> Unit): TextView {
-        val tv = TextView(this).apply {
-            text = label
+    private fun iconButtonPrimary(iconRes: Int, onClick: () -> Unit): ImageView {
+        val iv = ImageView(this).apply {
+            setImageResource(iconRes)
+            background = circleDrawable(accent)
+            val pad = dp(15)
+            setPadding(pad, pad, pad, pad)
+            layoutParams = LinearLayout.LayoutParams(dp(56), dp(56)).apply { marginStart = dp(6); marginEnd = dp(6) }
+        }
+        iv.setOnClickListener { onClick(); scheduleHideControls() }
+        playIcon = iv
+        return iv
+    }
+
+    private fun plusButton(onClick: () -> Unit): TextView {
+        return TextView(this).apply {
+            text = "+"
             setTextColor(Color.WHITE)
             textSize = 20f
             gravity = Gravity.CENTER
-            setBackgroundColor(accent)
-            layoutParams = LinearLayout.LayoutParams(dp(56), dp(56)).apply {
-                marginStart = dp(6); marginEnd = dp(6)
-            }
+            background = circleDrawable(Color.parseColor("#661a2f45"))
+            layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply { marginStart = dp(4); marginEnd = dp(4) }
+            setOnClickListener { onClick(); scheduleHideControls() }
         }
-        tv.setOnClickListener { onClick() }
-        playBtnRef = tv
-        return tv
+    }
+
+    // ═══ AUTO-OCULTAR CONTROLES ═══
+    private fun scheduleHideControls() {
+        uiHandler.removeCallbacks(hideControlsRunnable)
+        uiHandler.postDelayed(hideControlsRunnable, AUTO_HIDE_MS)
+    }
+
+    private fun showControls() {
+        controlsVisible = true
+        topBar.animate().alpha(1f).setDuration(200).start()
+        bottomBar.animate().alpha(1f).setDuration(200).start()
+        epgView.animate().alpha(1f).setDuration(200).start()
+        topBar.visibility = View.VISIBLE
+        bottomBar.visibility = View.VISIBLE
+        scheduleHideControls()
+    }
+
+    private fun hideControls() {
+        controlsVisible = false
+        topBar.animate().alpha(0f).setDuration(250).withEndAction { topBar.visibility = View.INVISIBLE }.start()
+        bottomBar.animate().alpha(0f).setDuration(250).withEndAction { bottomBar.visibility = View.INVISIBLE }.start()
+        epgView.animate().alpha(0f).setDuration(250).start()
+    }
+
+    private fun toggleControls() {
+        if (controlsVisible) { uiHandler.removeCallbacks(hideControlsRunnable); hideControls() } else showControls()
     }
 
     private fun loadCurrent() {
@@ -254,16 +315,13 @@ class PlayerActivity : AppCompatActivity() {
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
         player = exoPlayer
-        playBtnRef.text = "⏸"
+        playIcon.setImageResource(R.drawable.ic_pause)
     }
 
     private fun togglePlay() {
         val p = player ?: return
-        if (p.isPlaying) {
-            p.pause(); playBtnRef.text = "▶"
-        } else {
-            p.play(); playBtnRef.text = "⏸"
-        }
+        if (p.isPlaying) { p.pause(); playIcon.setImageResource(R.drawable.ic_play) }
+        else { p.play(); playIcon.setImageResource(R.drawable.ic_pause) }
     }
 
     private fun retry() = loadCurrent()
@@ -293,7 +351,6 @@ class PlayerActivity : AppCompatActivity() {
         Toast.makeText(this, "✅ Añadido a Mi Lista", Toast.LENGTH_SHORT).show()
     }
 
-    /** Consulta el EPG real del panel (get_short_epg) para el canal actual. */
     private fun fetchEpg(streamId: String) {
         val urlStr = "$apiUrl&action=get_short_epg&stream_id=$streamId&limit=1"
         netExecutor.execute {
@@ -309,25 +366,18 @@ class PlayerActivity : AppCompatActivity() {
                 if (listings != null && listings.length() > 0) {
                     val titleRaw = listings.getJSONObject(0).optString("title", "")
                     val decoded = decodeMaybeBase64(titleRaw)
-                    if (decoded.isNotBlank()) {
-                        runOnUiThread { epgView.text = "📺 $decoded" }
-                    }
+                    if (decoded.isNotBlank()) runOnUiThread { epgView.text = "▸ $decoded" }
                 }
-            } catch (e: Exception) {
-                // Sin EPG disponible para este canal — se deja en blanco, sin romper nada.
-            }
+            } catch (e: Exception) { /* sin EPG disponible, se deja en blanco */ }
         }
     }
 
-    // Muchos paneles Xtream mandan el título del EPG en Base64.
     private fun decodeMaybeBase64(s: String): String {
         return try {
             val decoded = String(Base64.decode(s, Base64.DEFAULT))
             val looksReadable = decoded.isNotBlank() && decoded.none { it.code in 1..8 }
             if (looksReadable) decoded else s
-        } catch (e: Exception) {
-            s
-        }
+        } catch (e: Exception) { s }
     }
 
     private fun enterPip() {
@@ -348,10 +398,7 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        // Si el usuario sale con el botón Home mientras hay video, entra a PiP solo.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && player?.isPlaying == true) {
-            enterPip()
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && player?.isPlaying == true) enterPip()
     }
 
     override fun onStop() {
@@ -360,6 +407,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        uiHandler.removeCallbacks(hideControlsRunnable)
         player?.release()
         player = null
         netExecutor.shutdownNow()
