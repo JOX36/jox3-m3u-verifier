@@ -786,29 +786,37 @@ async function doSearch(){
 }
 
 // ═══ REPRODUCTOR (nativo, ExoPlayer vía Kotlin) ═══
-// window.NativePlayer.play(url, titulo, categoria) abre un Activity nativo con
-// ExoPlayer. Al reproducir así, no pasa por el WebView y no hay límite de CORS
-// ni de formatos que el navegador no soporte.
+// window.NativePlayer.play(payloadJson) abre un Activity nativo con ExoPlayer.
+// Le mandamos la lista completa (no solo un item) para que Kotlin pueda mover
+// ⏮/⏭ sin volver a consultar el WebView, y el apiUrl para que pueda pedir el
+// EPG de "qué está pasando ahora" directamente si el canal es en vivo.
+function buildPlaylistAndPlay(idx,type){
+  const{host,username,password,apiUrl}=S.session;
+  const isLive=type==='live';
+  const items=(S._renderedItems||[]).map(it=>{
+    const sid=it.stream_id||it.series_id||0;
+    const url=type==='live'
+      ?`${host}/live/${username}/${password}/${sid}.ts`
+      :`${host}/movie/${username}/${password}/${sid}.mp4`;
+    return{name:it.name||it.title||'Sin nombre',url,streamId:String(sid),isLive};
+  });
+  const payload={apiUrl,items,startIndex:idx,category:{live:'TV en Vivo',series:'Series',vod:'Películas'}[type]};
+  if(window.NativePlayer&&window.NativePlayer.play){
+    window.NativePlayer.play(JSON.stringify(payload));
+  }else{
+    toast('Reproductor nativo no disponible aquí (solo funciona en la app instalada)','err');
+  }
+}
 function playItem(idx,type){
   const item=S._renderedItems&&S._renderedItems[idx];
   if(!item){toast('Error: item no encontrado','err');return;}
-  const{host,username,password}=S.session;
-  const name=item.name||item.title||'Sin nombre';
-  const category={live:'TV en Vivo',series:'Series',vod:'Películas'}[type];
   if(type==='series'){
     // Una serie tiene varios episodios: mejor abrir el modal para elegir cuál.
     toast('Elige un episodio para reproducir','info');
     openModalByIndex(idx,type);
     return;
   }
-  const url=type==='live'
-    ?`${host}/live/${username}/${password}/${item.stream_id}.ts`
-    :`${host}/movie/${username}/${password}/${item.stream_id}.mp4`;
-  if(window.NativePlayer&&window.NativePlayer.play){
-    window.NativePlayer.play(url,name,category);
-  }else{
-    toast('Reproductor nativo no disponible aquí (solo funciona en la app instalada)','err');
-  }
+  buildPlaylistAndPlay(idx,type);
 }
 // Llamado desde Kotlin cuando el usuario toca "Añadir a Mi Lista" dentro del
 // reproductor nativo, para que el item quede también en la lista de la app.
@@ -905,12 +913,17 @@ function addEpisode(snum,epIdx){
   closeModal();
 }
 function playEpisode(snum,epIdx){
-  const{item}=S.pendingItem;const{host,username,password}=S.session;
-  const ep=S.pendingSeriesInfo.episodes[snum][epIdx];
-  const name=`${item.name} T${snum}E${epIdx+1}${ep.title?' - '+ep.title:''}`;
-  const url=`${host}/series/${username}/${password}/${ep.id}.${ep.container_extension||'mkv'}`;
+  const{item}=S.pendingItem;const{host,username,password,apiUrl}=S.session;
+  const eps=S.pendingSeriesInfo.episodes[snum];
+  const items=eps.map((ep,i)=>({
+    name:`${item.name} T${snum}E${i+1}${ep.title?' - '+ep.title:''}`,
+    url:`${host}/series/${username}/${password}/${ep.id}.${ep.container_extension||'mkv'}`,
+    streamId:String(ep.id),
+    isLive:false
+  }));
+  const payload={apiUrl,items,startIndex:epIdx,category:'Series'};
   if(window.NativePlayer&&window.NativePlayer.play){
-    window.NativePlayer.play(url,name,'Series');
+    window.NativePlayer.play(JSON.stringify(payload));
   }else{
     toast('Reproductor nativo no disponible aquí (solo funciona en la app instalada)','err');
   }
