@@ -1,6 +1,7 @@
 package com.jox3.m3uverifier
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.os.Bundle
 import android.webkit.*
 import androidx.appcompat.app.AppCompatActivity
@@ -49,6 +50,23 @@ class MainActivity : AppCompatActivity() {
         // Esto evita CORS por completo, porque la petición HTTP la hace
         // Kotlin (HttpURLConnection), no el navegador dentro del WebView.
         webView.addJavascriptInterface(NativeChecker(), "NativeChecker")
+
+        // Puente JS -> Kotlin para el reproductor. Desde el HTML:
+        // window.NativePlayer.play(url, titulo, categoria)
+        // Abre PlayerActivity (ExoPlayer). Cuando el usuario toque "Añadir a
+        // Mi Lista" ahí dentro, este callback le avisa al WebView.
+        PlayerActivity.onAddToList = { name, url, category ->
+            val safeName = JSONObject.quote(name)
+            val safeUrl = JSONObject.quote(url)
+            val safeCategory = JSONObject.quote(category)
+            runOnUiThread {
+                webView.evaluateJavascript(
+                    "window.onNativeAddToList && window.onNativeAddToList($safeName,$safeUrl,$safeCategory);",
+                    null
+                )
+            }
+        }
+        webView.addJavascriptInterface(NativePlayer(), "NativePlayer")
 
         webView.loadUrl("file:///android_asset/index.html")
     }
@@ -109,6 +127,19 @@ class MainActivity : AppCompatActivity() {
                         null
                     )
                 }
+            }
+        }
+    }
+
+    inner class NativePlayer {
+        @JavascriptInterface
+        fun play(url: String, title: String, category: String) {
+            runOnUiThread {
+                val intent = Intent(this@MainActivity, PlayerActivity::class.java)
+                intent.putExtra("url", url)
+                intent.putExtra("title", title)
+                intent.putExtra("category", category)
+                startActivity(intent)
             }
         }
     }
