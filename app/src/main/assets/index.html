@@ -608,14 +608,21 @@ async function loadExploreType(type,catId=null){
 
 function toggleExploreCat(idx,catId,catName){
   if(exploreOpenIdx!==null&&exploreOpenIdx!==idx){
-    const ph=document.getElementById('ehead-'+exploreOpenIdx),pb=document.getElementById('ebody-'+exploreOpenIdx);
+    const ph=document.getElementById('ehead-'+exploreOpenIdx),pb=document.getElementById('ebody-'+exploreOpenIdx),pi=document.getElementById('einner-'+exploreOpenIdx);
     if(ph)ph.classList.remove('open');
     if(pb)pb.classList.remove('open');
+    if(pi)pi.innerHTML=''; // limpia para no dejar un #content-list duplicado escondido
   }
   const head=document.getElementById('ehead-'+idx),body=document.getElementById('ebody-'+idx);
   if(!head||!body)return;
   const wasOpen=head.classList.contains('open');
-  if(wasOpen){head.classList.remove('open');body.classList.remove('open');exploreOpenIdx=null;return;}
+  if(wasOpen){
+    head.classList.remove('open');body.classList.remove('open');
+    const inner=document.getElementById('einner-'+idx);
+    if(inner)inner.innerHTML='';
+    exploreOpenIdx=null;
+    return;
+  }
   head.classList.add('open');body.classList.add('open');exploreOpenIdx=idx;
   loadCategory(catId,catName,idx);
 }
@@ -632,16 +639,17 @@ async function loadCategory(catId,catName,idx){
     S.currentItems=Array.isArray(data)?data:[];S.currentStatuses={};
     inner.innerHTML=`
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
-        <input type="text" id="filter-input" placeholder="Filtrar..." style="flex:1;min-width:120px;padding:7px 10px;font-size:.85rem" oninput="filterItems()">
-        <span id="checking-status" style="font-size:.78rem;color:var(--muted)">${S.currentItems.length} elementos</span>
+        <input type="text" id="filter-input-${idx}" placeholder="Filtrar..." style="flex:1;min-width:120px;padding:7px 10px;font-size:.85rem" oninput="filterItems()">
+        <span id="checking-status-${idx}" style="font-size:.78rem;color:var(--muted)">${S.currentItems.length} elementos</span>
       </div>
-      <div class="content-list" id="content-list"></div>`;
+      <div class="content-list" id="content-list-${idx}"></div>`;
     renderContentList(S.currentItems);
   }catch(e){inner.innerHTML=`<div style="color:#ff5050;padding:10px">❌ ${e.message}</div>`;}
 }
 
 function renderContentList(items){
-  const listEl=document.getElementById('content-list');
+  const listEl=document.getElementById('content-list-'+exploreOpenIdx);
+  if(!listEl)return;
   if(!items.length){listEl.innerHTML='<div style="color:var(--muted);padding:10px">Sin contenido</div>';return;}
   S._renderedItems=items;
   const isLive=S.currentType==='live';
@@ -727,7 +735,9 @@ async function checkAllStreamsBackground(items){
   }
 }
 function filterItems(){
-  const kw=document.getElementById('filter-input').value.toLowerCase();
+  const input=document.getElementById('filter-input-'+exploreOpenIdx);
+  if(!input)return;
+  const kw=input.value.toLowerCase();
   renderContentList(kw?S.currentItems.filter(i=>(i.name||i.title||'').toLowerCase().includes(kw)):S.currentItems);
 }
 
