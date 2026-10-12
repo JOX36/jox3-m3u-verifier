@@ -377,8 +377,10 @@ function showSheet(title, html) {
   $('sheet').classList.add('show'); $('scrim').classList.add('show');
 }
 function showPage(id) {
-  const el = $(id); el.classList.add('show');
+  const el = $(id);
   if (!S.stack.some(l => l.id === id)) pushLayer('page', id);
+  el.style.zIndex = Math.min(49, 40 + S.stack.length);   // la última abierta siempre queda encima
+  el.classList.add('show');
 }
 function closeTop() {
   const top = S.stack.pop(); if (!top) return false;
@@ -659,13 +661,13 @@ async function getList(type, catId) {
 }
 
 /* ─── Favoritos ─── */
-function favMap(type) {
-  const id = S.activeId || '_'; S.favs[id] = S.favs[id] || { live: {}, vod: {}, series: {} };
+function favMap(type, accId) {
+  const id = accId || S.activeId || '_'; S.favs[id] = S.favs[id] || { live: {}, vod: {}, series: {} };
   return S.favs[id][type] = S.favs[id][type] || {};
 }
-function isFav(type, it) { return !!favMap(type)[itemId(type, it)]; }
-function toggleFav(type, it, btn) {
-  const m = favMap(type), id = itemId(type, it);
+function isFav(type, it, accId) { return !!favMap(type, accId)[itemId(type, it)]; }
+function toggleFav(type, it, btn, accId) {
+  const m = favMap(type, accId), id = itemId(type, it);
   if (m[id]) { delete m[id]; toast('Quitado de favoritos'); }
   else {
     const keep = { name: it.name, stream_id: it.stream_id, series_id: it.series_id, stream_icon: it.stream_icon, cover: it.cover, category_id: it.category_id, rating: it.rating, rating_5based: it.rating_5based, container_extension: it.container_extension, epg_channel_id: it.epg_channel_id, num: it.num };
@@ -947,10 +949,10 @@ function ensureGrid(type, cat) {
   if (S.view[type] === want && body.querySelector('.grid')) { renderContinue(type); return; }
   loadGrid(type, want);
 }
-function continueItems(type) {
+function continueItems(type, sess) {
   let list = [];
   try { if (window.NativeApp && NativeApp.getContinueWatching) list = JSON.parse(NativeApp.getContinueWatching() || '[]'); } catch { }
-  const acc = S.session; if (!acc) return [];
+  const acc = sess || S.session; if (!acc) return [];
   const prefix = `${acc.host}/${type === 'vod' ? 'movie' : 'series'}/${acc.username}/`;
   return list.filter(x => x.url && x.url.startsWith(prefix) && x.dur > 0).slice(0, 15);
 }
@@ -1012,17 +1014,19 @@ function appendGrid(type) {
 }
 
 /* ═══════════════════════════ FICHA ═══════════════════════════ */
-async function openDetail(type, it) {
+async function openDetail(type, it, accId) {
   if (!it) return;
-  S.detail = { type, item: it, info: null, season: null };
+  accId = accId || S.activeId;
+  const sess = sessionFor(accId);
+  S.detail = { type, item: it, info: null, season: null, accId, sess };
   const page = $('page-detail');
   page.innerHTML = detailShell(type, it, null);
   page.scrollTop = 0;
   showPage('page-detail');
   try {
     const info = type === 'vod'
-      ? await apiGet(`${S.session.apiUrl}&action=get_vod_info&vod_id=${encodeURIComponent(it.stream_id)}`)
-      : await apiGet(`${S.session.apiUrl}&action=get_series_info&series_id=${encodeURIComponent(it.series_id)}`);
+      ? await apiGet(`${sess.apiUrl}&action=get_vod_info&vod_id=${encodeURIComponent(it.stream_id)}`, 25000, { noBrake: accId !== S.activeId })
+      : await apiGet(`${sess.apiUrl}&action=get_series_info&series_id=${encodeURIComponent(it.series_id)}`, 25000, { noBrake: accId !== S.activeId });
     if (!S.detail || S.detail.item !== it) return;
     S.detail.info = info || {};
     page.innerHTML = detailShell(type, it, S.detail.info);
@@ -1041,8 +1045,8 @@ function detailShell(type, it, info) {
   const dur = inf.duration || (inf.episode_run_time ? `${inf.episode_run_time} min por episodio` : '');
   const q = quality(itemName(it));
   const genres = String(inf.genre || '').split(/[,/]/).map(s => s.trim()).filter(Boolean);
-  const fav = isFav(type, it);
-  const loading = !info;
+  const fav = isFav(type, it, S.detail.accId);
+  const loading = !info, sess = S.detail.sess, srcAcc = accountById(S.detail.accId);
   let audio = '';
   if (info && info.movie_data && inf.audio && inf.audio.tags && inf.audio.tags.language) audio = inf.audio.tags.language;
   const seasons = type === 'series' && info ? Object.keys(info.episodes || {}).sort((a, b) => +a - +b) : [];
@@ -1056,6 +1060,7 @@ function detailShell(type, it, info) {
     <div class="head">
       <div class="poster">${poster ? `<img src="${esc(poster)}" alt="" onerror="this.remove()">` : ''}</div>
       <div class="ttl"><h2>${esc(name)}</h2>
+        ${srcAcc && S.accounts.length > 1 ? `<div class="hint" style="margin-top:4px">${icon('tv', 'tiny')} ${esc(accLabel(srcAcc))}</div>` : ''}
         <div class="pills">${r ? `<span class="s">★ ${r}</span>` : ''}${year ? `<span>${esc(year)}</span>` : ''}${dur ? `<span>${esc(dur)}</span>` : ''}${q ? `<span>${q}</span>` : ''}${type === 'series' && seasons.length ? `<span>${seasons.length} ${seasons.length === 1 ? 'temporada' : 'temporadas'}</span>` : ''}</div>
       </div>
     </div>
@@ -1065,7 +1070,7 @@ function detailShell(type, it, info) {
         ${type === 'vod'
           ? `<button class="btn primary" onclick="playVod()">${icon('play')}Reproducir</button>
              <button class="sq" onclick="addDetailToList()" aria-label="Añadir a Mi lista">${icon('plus')}</button>
-             <button class="sq" onclick="copyText(${jsArg(streamUrl('vod', it))},'Enlace copiado')" aria-label="Copiar enlace">${icon('copy')}</button>`
+             <button class="sq" onclick="copyText(${jsArg(streamUrl('vod', it, sess))},'Enlace copiado')" aria-label="Copiar enlace">${icon('copy')}</button>`
           : `<button class="btn primary" ${loading || !seasons.length ? 'disabled' : ''} onclick="playEpisode(${jsArg(S.detail?.season || '')},0)">${icon('play')}${seasons.length ? `Ver T${esc(S.detail?.season)} E1` : 'Reproducir'}</button>
              <button class="sq" ${loading ? 'disabled' : ''} onclick="openSeriesAddMenu()" aria-label="Añadir a Mi lista">${icon('plus')}</button>`}
       </div>
@@ -1079,12 +1084,12 @@ function seriesEpisodesHtml(info) {
   const eps = info.episodes || {}, seasons = Object.keys(eps).sort((a, b) => +a - +b);
   if (!seasons.length) return `<h2 class="sec">Episodios</h2><div class="hint">El servidor no tiene episodios para esta serie.</div>`;
   const cur = S.detail.season || seasons[0], list = eps[cur] || [];
-  const resume = {}; continueItems('series').forEach(x => { resume[x.url] = x; });
+  const resume = {}; continueItems('series', S.detail.sess).forEach(x => { resume[x.url] = x; });
   return `<h2 class="sec">Episodios <button onclick="addSeason(${jsArg(cur)})">Añadir temporada</button></h2>
     <div class="seasons">${seasons.map(s => `<button class="chip${s === cur ? ' on' : ''}" onclick="selectSeason(${jsArg(s)})">Temporada ${esc(s)}</button>`).join('')}</div>
     ${list.map((ep, i) => {
       const img = ep.info && (ep.info.movie_image || ep.info.cover_big);
-      const url = streamUrl('episode', ep), rs = resume[url];
+      const url = streamUrl('episode', ep, S.detail.sess), rs = resume[url];
       const dur = ep.info && (ep.info.duration || (ep.info.duration_secs ? Math.round(ep.info.duration_secs / 60) + ' min' : ''));
       return `<div class="ep" role="button" onclick="playEpisode(${jsArg(cur)},${i})">
         <div class="th">${img ? `<img src="${esc(img)}" loading="lazy" alt="" onerror="this.remove()">` : ''}<span class="pl">${icon('play')}</span>${rs ? `<i style="width:${Math.round(rs.pos / rs.dur * 100)}%"></i>` : ''}</div>
@@ -1096,7 +1101,7 @@ function seriesEpisodesHtml(info) {
 function selectSeason(s) { if (!S.detail) return; S.detail.season = s; const top = $('page-detail').scrollTop; $('page-detail').innerHTML = detailShell(S.detail.type, S.detail.item, S.detail.info); $('page-detail').scrollTop = top; }
 function toggleDetailFav() {
   if (!S.detail) return;
-  const on = toggleFav(S.detail.type, S.detail.item);
+  const on = toggleFav(S.detail.type, S.detail.item, null, S.detail.accId);
   const b = $('detail-fav'); b.innerHTML = icon(on ? 'star' : 'star-o'); b.style.color = on ? 'var(--warn)' : '';
   const g = $(`${S.detail.type}-grid`); if (g && S.view[S.detail.type] === 'fav') loadGrid(S.detail.type, 'fav');
 }
@@ -1107,34 +1112,35 @@ function detailMeta() {
 function playVod() {
   const { item } = S.detail; const m = detailMeta();
   // Lista = la categoría visible, para pasar a la siguiente película desde el reproductor.
-  const list = S.rendered.vod.includes(item) ? S.rendered.vod : [item];
+  const list = S.detail.accId === S.activeId && S.rendered.vod.includes(item) ? S.rendered.vod : [item], sess = S.detail.sess;
   let idx = list.indexOf(item), start = 0, slice = list;
   if (list.length > 300) { start = Math.max(0, idx - 150); slice = list.slice(start, start + 300); }
-  nativePlay(slice.map(it => ({ name: cleanTitle(itemName(it)), url: streamUrl('vod', it), streamId: String(it.stream_id), isLive: false, poster: it === item ? m.thumbnail : (it.stream_icon || '') })), idx - start, 'Películas');
+  nativePlay(slice.map(it => ({ name: cleanTitle(itemName(it)), url: streamUrl('vod', it, sess), streamId: String(it.stream_id), isLive: false, poster: it === item ? m.thumbnail : (it.stream_icon || '') })), idx - start, 'Películas', sess.apiUrl);
 }
 function addDetailToList() {
   const { item } = S.detail; const m = detailMeta();
-  addToList({ name: cleanTitle(itemName(item)), url: streamUrl('vod', item), category: catsOf('vod').find(c => String(c.category_id) === String(item.category_id))?.category_name || 'Películas', ...m });
+  const own = S.detail.accId === S.activeId;
+  addToList({ name: cleanTitle(itemName(item)), url: streamUrl('vod', item, S.detail.sess), category: (own && catsOf('vod').find(c => String(c.category_id) === String(item.category_id))?.category_name) || 'Películas', ...m });
 }
 function epName(snum, i, ep) { return `${cleanTitle(itemName(S.detail.item))} T${snum}E${ep.episode_num || i + 1}${ep.title ? ' - ' + ep.title : ''}`; }
 function playEpisode(snum, i) {
   if (!S.detail || !S.detail.info) return;
   const eps = (S.detail.info.episodes || {})[snum] || []; if (!eps[i]) return;
   const m = detailMeta();
-  nativePlay(eps.map((ep, k) => ({ name: epName(snum, k, ep), url: streamUrl('episode', ep), streamId: String(ep.id), isLive: false, poster: (ep.info && ep.info.movie_image) || m.thumbnail })), i, 'Series');
+  nativePlay(eps.map((ep, k) => ({ name: epName(snum, k, ep), url: streamUrl('episode', ep, S.detail.sess), streamId: String(ep.id), isLive: false, poster: (ep.info && ep.info.movie_image) || m.thumbnail })), i, 'Series', S.detail.sess.apiUrl);
 }
 function addEpisode(snum, i) {
   const ep = ((S.detail.info.episodes || {})[snum] || [])[i]; if (!ep) return;
-  addToList({ name: epName(snum, i, ep), url: streamUrl('episode', ep), category: 'Series', ...detailMeta() });
+  addToList({ name: epName(snum, i, ep), url: streamUrl('episode', ep, S.detail.sess), category: 'Series', ...detailMeta() });
 }
 function addSeason(snum) {
   const eps = (S.detail.info.episodes || {})[snum] || [], m = detailMeta();
-  eps.forEach((ep, i) => addToList({ name: epName(snum, i, ep), url: streamUrl('episode', ep), category: 'Series', ...m }, true));
+  eps.forEach((ep, i) => addToList({ name: epName(snum, i, ep), url: streamUrl('episode', ep, S.detail.sess), category: 'Series', ...m }, true));
   renderMyList(); toast(`Temporada ${snum} añadida (${eps.length} episodios)`, 'ok');
 }
 function addWholeSeries() {
   const { item } = S.detail;
-  addToList({ name: cleanTitle(itemName(item)), url: streamUrl('series', item), category: 'Series', ...detailMeta() });
+  addToList({ name: cleanTitle(itemName(item)), url: streamUrl('series', item, S.detail.sess), category: 'Series', ...detailMeta() });
 }
 function openSeriesAddMenu() {
   if (!S.detail || !S.detail.info) return;
@@ -1145,28 +1151,64 @@ function openSeriesAddMenu() {
 }
 
 /* ═══════════════════════════ REPRODUCTOR NATIVO ═══════════════════════════ */
-function nativePlay(items, startIndex, category) {
-  const payload = { apiUrl: S.session ? S.session.apiUrl : '', items, startIndex, category };
+function nativePlay(items, startIndex, category, apiUrl) {
+  const payload = { apiUrl: apiUrl || (S.session ? S.session.apiUrl : ''), items, startIndex, category };
   if (window.NativePlayer && NativePlayer.play) NativePlayer.play(JSON.stringify(payload));
   else toast('El reproductor solo funciona en la app instalada', 'err');
 }
 window.onNativeAddToList = function (name, url, category) { addToList({ name, url, category, synopsis: '', thumbnail: '' }); };
 
-/* ═══════════════════════════ BÚSQUEDA GLOBAL ═══════════════════════════ */
+/* ═══════════════════════════ BÚSQUEDA UNIVERSAL ═══════════════════════════ */
+// Busca en todas las cuentas activas a la vez y agrupa por título, indicando en qué servidor está cada uno.
 let searchType = 'all';
+S.searchScope = 'all';
+S.accLists = {};
+function accLabel(a) { return `${a.username} · ${hostLabel(a.host)}`; }
+function usableAccounts() {
+  return S.accounts.filter(a => a.status === 'Active' && (daysLeft(a) === null || daysLeft(a) >= 0))
+    .sort((x, y) => (y.id === S.activeId) - (x.id === S.activeId));
+}
+function sessionFor(id) {
+  if (id === S.activeId && S.session) return S.session;
+  const a = accountById(id); return a ? buildSession(a, { live: [], vod: [], series: [] }) : S.session;
+}
+// Catálogo completo de un tipo para cualquier cuenta (con caché).
+async function getListFor(acc, type) {
+  if (acc.id === S.activeId && S.session) return getList(type, '*');
+  const key = `${acc.id}:${type}`;
+  if (S.accLists[key]) return S.accLists[key];
+  const dbKey = `list:${acc.id}:${type}:*`;
+  const cached = await idb.get(dbKey);
+  if (cached && Date.now() - cached.ts < TTL_STREAMS && Array.isArray(cached.items)) return (S.accLists[key] = cached.items);
+  const data = await apiGet(`${apiUrlOf(acc)}&action=${TYPES[type].streams}`, 90000, { noBrake: true });
+  const items = Array.isArray(data) ? data : [];
+  S.accLists[key] = items; idb.set(dbKey, { ts: Date.now(), items });
+  return items;
+}
 function openSearch() {
-  if (!S.session) { toast('Primero agrega una cuenta', 'err'); switchTab('accounts'); return; }
+  if (!S.accounts.length) { toast('Primero agrega una cuenta', 'err'); switchTab('accounts'); return; }
+  if (usableAccounts().length < 2) S.searchScope = 'active';
   showPage('page-search');
   renderSearchFilters();
   setTimeout(() => $('search-input').focus(), 250);
-  if (!$('search-input').value) $('search-body').innerHTML = `<div class="hint" style="padding:12px 4px">Busca por nombre en todo el catálogo de la cuenta activa. La primera búsqueda descarga el catálogo y las siguientes son instantáneas.</div>`;
+  if (!$('search-input').value) $('search-body').innerHTML = `<div class="hint" style="padding:12px 4px">Busca por nombre en todo el catálogo. Con "Todas las cuentas" busca a la vez en cada cuenta activa y te dice en qué servidor está cada resultado. La primera búsqueda descarga los catálogos, uno por uno; las siguientes son instantáneas.</div>`;
 }
 function renderSearchFilters() {
   const f = [['all', 'Todo'], ['live', 'En vivo'], ['vod', 'Películas'], ['series', 'Series']];
+  const n = usableAccounts().length;
   $('search-filters').innerHTML = f.map(([k, l]) => `<button class="chip${searchType === k ? ' on' : ''}" onclick="searchType='${k}';renderSearchFilters();runSearch(true)">${l}</button>`).join('');
+  $('search-scope').innerHTML = n > 1
+    ? `<button class="${S.searchScope === 'all' ? 'on' : ''}" onclick="S.searchScope='all';renderSearchFilters();runSearch(true)">Todas las cuentas (${n})</button><button class="${S.searchScope === 'active' ? 'on' : ''}" onclick="S.searchScope='active';renderSearchFilters();runSearch(true)">Solo ${esc(activeAccount()?.username || 'esta cuenta')}</button>`
+    : '';
+  $('search-scope').hidden = n < 2;
 }
-const onSearchInput = debounce(() => runSearch(false), 350);
+const onSearchInput = debounce(() => runSearch(false), 400);
 function clearSearch() { $('search-input').value = ''; $('search-clear').hidden = true; $('search-body').innerHTML = ''; $('search-input').focus(); }
+const normTxt = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+// Clave para agrupar el mismo título en varios servidores: sin tildes, calidad, año entre paréntesis ni símbolos.
+function groupKey(type, name) {
+  return type + ':' + normTxt(cleanTitle(name)).replace(/\b(4k|uhd|fhd|hd|sd|hevc|h265|latino|lat|dual|sub|esp)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
 let searchGen = 0;
 async function runSearch(force) {
   const q = $('search-input').value.trim(); $('search-clear').hidden = !q;
@@ -1174,37 +1216,82 @@ async function runSearch(force) {
   if (q.length < 2) { if (force && q) toast('Escribe al menos 2 letras'); if (!q) body.innerHTML = ''; return; }
   const gen = ++searchGen;
   const types = searchType === 'all' ? ['live', 'vod', 'series'] : [searchType];
-  const missing = types.filter(t => !S.lists[`${t}:*`]);
-  if (missing.length) body.innerHTML = loadingHtml(`Descargando catálogo de ${missing.map(t => TYPES[t].label.toLowerCase()).join(', ')}…`);
-  const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-  const nq = norm(q);
-  const results = {};
-  for (const t of types) {
-    try { const all = await getList(t, '*'); results[t] = all.filter(i => norm(itemName(i)).includes(nq)); }
-    catch (e) { results[t] = { error: e.message, rejected: REJECT.has(e.status) }; }
-    if (gen !== searchGen) return;
+  const accs = S.searchScope === 'all' ? usableAccounts() : [activeAccount()].filter(Boolean);
+  if (!accs.length) { body.innerHTML = emptyState('acc', 'No hay cuentas activas', 'Verifica una cuenta para poder buscar.'); return; }
+  const nq = normTxt(q), groups = {}, errors = [];
+  let step = 0; const steps = accs.length * types.length;
+  // Una cuenta y un tipo a la vez, para no saturar a ningún servidor.
+  for (const acc of accs) {
+    for (const t of types) {
+      step++;
+      const memKey = acc.id === S.activeId ? S.lists[`${t}:*`] : S.accLists[`${acc.id}:${t}`];
+      if (!memKey) body.innerHTML = loadingHtml(`Descargando ${TYPES[t].label.toLowerCase()} de ${acc.username} (${step} de ${steps})…`);
+      try {
+        const all = await getListFor(acc, t);
+        for (const it of all) {
+          const name = itemName(it);
+          if (!normTxt(name).includes(nq)) continue;
+          const k = groupKey(t, name);
+          (groups[k] = groups[k] || { type: t, name: cleanTitle(name), hits: [] }).hits.push({ accId: acc.id, item: it });
+        }
+      } catch (e) { errors.push({ acc, t, e }); }
+      if (gen !== searchGen) return;
+    }
   }
-  S.searchResults = results;
-  const total = types.reduce((n, t) => n + (Array.isArray(results[t]) ? results[t].length : 0), 0);
-  if (!total && !types.some(t => results[t].error)) { body.innerHTML = emptyState('search', `Nada para “${q}”`, 'Prueba con otra palabra o revisa la ortografía.'); return; }
+  const byType = { live: [], vod: [], series: [] };
+  Object.values(groups).forEach(g => byType[g.type].push(g));
+  // Primero lo que está en más servidores, luego por nombre.
+  for (const t of types) byType[t].sort((a, b) => new Set(b.hits.map(h => h.accId)).size - new Set(a.hits.map(h => h.accId)).size || a.name.localeCompare(b.name));
+  S.searchGroups = byType;
+  const total = types.reduce((n, t) => n + byType[t].length, 0);
   let html = '';
+  if (errors.length) html += `<div class="hint" style="margin:4px 0 6px;color:var(--warn)">${errors.map(x => `No se pudo buscar ${TYPES[x.t].label.toLowerCase()} en ${esc(x.acc.username)}: ${esc(x.e.message)}`).join('<br>')}</div>`;
+  if (!total) { body.innerHTML = html + emptyState('search', `Nada para “${q}”`, accs.length > 1 ? `Se buscó en ${accs.length} cuentas. Prueba con otra palabra.` : 'Prueba con otra palabra o revisa la ortografía.'); return; }
   for (const t of types) {
-    const r = results[t];
-    if (r.error) { html += `<h2 class="sec">${TYPES[t].label}</h2><div class="hint">No se pudo buscar: ${esc(r.error)}.${r.rejected ? ' El servidor está rechazando las conexiones; espera unos minutos o usa Probar conexión en la cuenta.' : ''}</div>`; continue; }
-    if (!r.length) continue;
-    const limit = searchType === 'all' ? (t === 'live' ? 8 : 9) : 120;
+    const r = byType[t]; if (!r.length) continue;
+    const limit = searchType === 'all' ? (t === 'live' ? 8 : 9) : 150;
     html += `<h2 class="sec">${TYPES[t].label} <span class="hint">${fmtNum(r.length)}</span>${searchType === 'all' && r.length > limit ? `<button onclick="searchType='${t}';renderSearchFilters();runSearch(true)">Ver todos</button>` : ''}</h2>`;
     if (t === 'live') {
-      html += r.slice(0, limit).map((it, i) => `<button class="ch" onclick="playSearchLive(${i})">${logoHtml(itemName(it), it.stream_icon)}<span class="n"><b>${esc(itemName(it))}</b><small>${esc(catsOf('live').find(c => String(c.category_id) === String(it.category_id))?.category_name || '')}</small></span>${icon('play')}</button>`).join('');
+      html += r.slice(0, limit).map((g, i) => {
+        const it = g.hits[0].item;
+        return `<button class="ch" onclick="openHit('live',${i})">${logoHtml(itemName(it), it.stream_icon)}<span class="n"><b>${esc(itemName(it))}</b><small>${esc(serversLine(g))}</small></span>${g.hits.length > 1 ? `<span class="srv-n">${g.hits.length}</span>` : icon('play')}</button>`;
+      }).join('');
     } else {
-      html += `<div class="grid">${r.slice(0, limit).map((it, i) => posterHtml(t, it, `openDetail('${t}',S.searchResults.${t}[${i}])`)).join('')}</div>`;
+      html += `<div class="grid">${r.slice(0, limit).map((g, i) => {
+        const it = g.hits.find(h => itemImg(t, h.item))?.item || g.hits[0].item;
+        return `<div class="hit">${posterHtml(t, it, `openHit('${t}',${i})`)}<small>${esc(serversLine(g, true))}</small></div>`;
+      }).join('')}</div>`;
     }
   }
   body.innerHTML = html;
 }
-function playSearchLive(i) {
-  const r = S.searchResults.live || [];
-  nativePlay(r.slice(0, 500).map(it => ({ name: itemName(it), url: streamUrl('live', it), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '' })), Math.min(i, 499), 'Búsqueda');
+function serversLine(g, short) {
+  const ids = [...new Set(g.hits.map(h => h.accId))];
+  const names = ids.map(id => accountById(id)?.username || '?');
+  if (short) return ids.length > 1 ? `En ${ids.length} servidores` : names[0];
+  return ids.length > 1 ? `En ${ids.length} servidores: ${names.join(', ')}` : `En ${names[0]} · ${hostLabel(accountById(ids[0])?.host || '')}`;
+}
+function openHit(type, i) {
+  const g = (S.searchGroups[type] || [])[i]; if (!g) return;
+  if (g.hits.length === 1) return playHit(type, g.hits[0]);
+  S.hitChoice = g;
+  showSheet(g.name, `<div class="hint" style="margin:-4px 0 6px">Disponible en ${g.hits.length} ${g.hits.length === 1 ? 'lugar' : 'lugares'}. Elige de qué servidor verlo.</div>` +
+    g.hits.map((h, k) => {
+      const a = accountById(h.accId) || {}, q = quality(itemName(h.item));
+      return `<button class="row" onclick="closeTop();playHit('${type}',S.hitChoice.hits[${k}])">
+        <span class="dot ${accLevel(a)}"></span>
+        <span class="n"><b>${esc(a.username || '?')}${h.accId === S.activeId ? ' (activa)' : ''}</b><small>${esc(hostLabel(a.host || ''))} · ${esc(itemName(h.item))}</small></span>
+        <span class="end">${q ? `<span class="badge muted">${q}</span> ` : ''}<span style="color:var(--${accLevel(a) === 'muted' ? 'muted' : accLevel(a)})">${esc(accDaysLabel(a, true))}</span></span></button>`;
+    }).join(''));
+}
+function playHit(type, h) {
+  const sess = sessionFor(h.accId);
+  if (type === 'live') {
+    const it = h.item;
+    nativePlay([{ name: itemName(it), url: streamUrl('live', it, sess), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '' }], 0, `Búsqueda · ${accountById(h.accId)?.username || ''}`, sess.apiUrl);
+    return;
+  }
+  openDetail(type, h.item, h.accId);
 }
 
 /* ═══════════════════════════ MI LISTA ═══════════════════════════ */
@@ -1370,7 +1457,7 @@ async function testTelegram() {
   catch (e) { st.innerHTML = `<div class="tg-status" style="color:var(--off)">${icon('close')}${esc(e.message)}</div>`; }
 }
 async function clearCache() {
-  await idb.clear(); S.lists = {}; S.view = { live: null, vod: null, series: null };
+  await idb.clear(); S.lists = {}; S.accLists = {}; S.view = { live: null, vod: null, series: null };
   toast('Catálogos borrados', 'ok');
 }
 
