@@ -86,7 +86,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** Un item reproducible dentro del playlist que manda el WebView. */
-data class PlaylistItem(val name: String, val url: String, val streamId: String, val isLive: Boolean)
+data class PlaylistItem(val name: String, val url: String, val streamId: String, val isLive: Boolean, val poster: String = "")
 
 /**
  * Reproductor nativo (ExoPlayer/Media3) a pantalla completa real:
@@ -125,6 +125,8 @@ class PlayerActivity : AppCompatActivity() {
         private const val SMART_MAX_ZOOM = 1.06f
         private const val PREFS_BRIDGE = "jox3_bridge"
         private const val KEY_PENDING_ADDS = "pending_adds"
+        private const val KEY_CONTINUE = "continue_watching"
+        private const val MAX_CONTINUE = 40
 
         private const val ACTION_PIP = "com.jox3.m3uverifier.PIP_CONTROL"
         private const val EXTRA_PIP = "control"
@@ -137,6 +139,10 @@ class PlayerActivity : AppCompatActivity() {
          * WebView aún no ha recibido. Se guardan en disco (no en un callback
          * estático) para no perderlos aunque Android cierre la app por memoria.
          */
+        /** Películas/episodios empezados y no terminados, el más reciente primero. */
+        fun continueWatching(ctx: Context): String =
+            ctx.getSharedPreferences(PREFS_PLAYER, Context.MODE_PRIVATE).getString(KEY_CONTINUE, "[]") ?: "[]"
+
         fun takePendingAdds(ctx: Context): JSONArray {
             val prefs = ctx.getSharedPreferences(PREFS_BRIDGE, Context.MODE_PRIVATE)
             val raw = prefs.getString(KEY_PENDING_ADDS, null) ?: return JSONArray()
@@ -402,7 +408,8 @@ class PlayerActivity : AppCompatActivity() {
                             name = o.optString("name", "Sin nombre"),
                             url = o.optString("url", ""),
                             streamId = o.optString("streamId", ""),
-                            isLive = o.optBoolean("isLive", false)
+                            isLive = o.optBoolean("isLive", false),
+                            poster = o.optString("poster", "")
                         )
                     )
                 }
@@ -571,8 +578,11 @@ class PlayerActivity : AppCompatActivity() {
             return
         }
         val detail = describeError(error)
-        val isNetwork = error.errorCode in 2000..2999
-        if (isNetwork && retryCount < MAX_RETRIES) {
+        // Un 4xx (403, 404…) es una respuesta del servidor, no un corte: reintentar
+        // no sirve y puede empeorar un bloqueo de la IP. Solo se reintentan cortes y 5xx.
+        val http = (error.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode
+        val retryable = error.errorCode in 2000..2999 && (http == null || http >= 500)
+        if (retryable && retryCount < MAX_RETRIES) {
             retryCount++
             showMessage("Reconectando… ($retryCount/$MAX_RETRIES)", detail)
             ui.removeCallbacks(retryRunnable)
@@ -594,7 +604,7 @@ class PlayerActivity : AppCompatActivity() {
         return when {
             http == 401 || http == 403 ->
                 "El servidor rechazó la conexión (HTTP $http). Puede que la cuenta tenga todas sus conexiones en uso o esté vencida."
-            http == 404 -> "El servidor no tiene este contenido (HTTP 404)."
+            http == 404 -> "El servidor respondió HTTP 404: no encuentra este contenido o está rechazando la conexión (bloqueo temporal o conexiones de la cuenta en uso)."
             http != null -> "El servidor respondió con un error (HTTP $http)."
             error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ->
                 "No se pudo conectar con el servidor. Revisa tu internet."
@@ -703,10 +713,30 @@ class PlayerActivity : AppCompatActivity() {
         val dur = player.duration
         val pos = player.currentPosition
         if (dur == C.TIME_UNSET || dur <= 0) return
-        val prefs = getSharedPreferences(PREFS_PLAYER, MODE_PRIVATE).edit()
+        val sp = getSharedPreferences(PREFS_PLAYER, MODE_PRIVATE)
+        val prefs = sp.edit()
+        val inProgress = pos > 30_000 && pos < dur - 60_000
         when {
-            pos > 30_000 && pos < dur - 60_000 -> prefs.putLong(resumeKey(item.url), pos)
+            inProgress -> prefs.putLong(resumeKey(item.url), pos)
             pos >= dur - 60_000 -> prefs.remove(resumeKey(item.url))
+        }
+        // Lista "Continuar viendo" que muestra la app.
+        if (inProgress || pos >= dur - 60_000) {
+            val old = try { JSONArray(sp.getString(KEY_CONTINUE, "[]")) } catch (e: Exception) { JSONArray() }
+            val updated = JSONArray()
+            if (inProgress) {
+                updated.put(
+                    JSONObject().put("name", item.name).put("url", item.url).put("streamId", item.streamId)
+                        .put("poster", item.poster).put("pos", pos).put("dur", dur).put("ts", System.currentTimeMillis())
+                )
+            }
+            for (i in 0 until old.length()) {
+                val o = old.optJSONObject(i) ?: continue
+                if (o.optString("url") == item.url) continue
+                if (updated.length() >= MAX_CONTINUE) break
+                updated.put(o)
+            }
+            prefs.putString(KEY_CONTINUE, updated.toString())
         }
         prefs.apply()
     }
