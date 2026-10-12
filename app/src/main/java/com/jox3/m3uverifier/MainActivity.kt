@@ -20,6 +20,15 @@ import java.net.URL
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
+/** Detecta TV box / Android TV: modo TV del sistema o equipo sin pantalla táctil. */
+fun isTvDevice(ctx: android.content.Context): Boolean {
+    val ui = ctx.getSystemService(android.content.Context.UI_MODE_SERVICE) as? android.app.UiModeManager
+    if (ui?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION) return true
+    val pm = ctx.packageManager
+    return pm.hasSystemFeature("android.software.leanback") ||
+        !pm.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)
+}
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
@@ -88,6 +97,12 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
+        if (isTvDevice(this)) {
+            // Con control remoto el WebView debe tener el foco para recibir las flechas.
+            webView.isFocusable = true
+            webView.isFocusableInTouchMode = true
+            webView.requestFocus()
+        }
         webView.loadUrl("file:///android_asset/index.html")
     }
 
@@ -213,6 +228,10 @@ class MainActivity : AppCompatActivity() {
         /** Lista "Continuar viendo" que guarda el reproductor. */
         @JavascriptInterface
         fun getContinueWatching(): String = PlayerActivity.continueWatching(this@MainActivity)
+
+        /** true en TV box / Android TV (se maneja con control remoto). */
+        @JavascriptInterface
+        fun isTv(): Boolean = isTvDevice(this@MainActivity)
 
         @JavascriptInterface
         fun appVersion(): String = try {

@@ -335,3 +335,21 @@ svg.i.tiny{width:14px;height:14px;vertical-align:-2px}
 .srv .more{display:none!important}
 .more-btn{margin-top:10px;width:100%}
 .srv summary .dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+
+/* ═══ Modo TV (control remoto) ═══ */
+body.tv :focus{outline:none}
+body.tv button:focus,body.tv [tabindex]:focus,body.tv summary:focus,body.tv select:focus{box-shadow:0 0 0 3px var(--accent),0 0 18px rgba(var(--ar),.45);border-radius:12px;position:relative;z-index:2}
+body.tv .input:focus,body.tv .search:focus-within{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+body.tv .po:focus{transform:scale(1.07);transition:transform .12s}
+body.tv .ch:focus,body.tv .row:focus,body.tv .ep:focus,body.tv .set-row:focus,body.tv .menu-item:focus,body.tv .li .n:focus{background:rgba(var(--ar),.12)}
+body.tv .chip:focus{box-shadow:0 0 0 3px var(--text);border-radius:18px}
+body.tv .nav button:focus{color:var(--accent);background:rgba(var(--ar),.12)}
+body.tv .ib:focus,body.tv .fav:focus,body.tv .sq:focus{border-radius:50%}
+body.tv .sq:focus{border-radius:var(--radius)}
+/* En TV la pantalla es ancha: contenido centrado y portadas más chicas */
+body.tv .scroll{padding-left:max(16px,calc((100vw - 1100px)/2));padding-right:max(16px,calc((100vw - 1100px)/2))}
+body.tv .grid{grid-template-columns:repeat(auto-fill,minmax(112px,1fr))}
+body.tv .detail .body,body.tv .detail .head{max-width:1100px;margin-left:auto;margin-right:auto}
+body.tv .detail .hero{height:230px}
+body.tv .btn.primary:focus{box-shadow:0 0 0 3px #fff,0 0 22px rgba(var(--ar),.6)}
+body.tv .chip.on:focus{box-shadow:0 0 0 3px #fff}
