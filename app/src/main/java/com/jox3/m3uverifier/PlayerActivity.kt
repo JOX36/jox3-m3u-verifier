@@ -18,6 +18,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.Icon
 import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.StateListDrawable
+import android.graphics.drawable.ColorDrawable
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
@@ -860,7 +862,8 @@ class PlayerActivity : AppCompatActivity() {
         row.addView(clockView, LinearLayout.LayoutParams(wrap(), wrap()).apply { marginEnd = dp(10) })
         row.addView(circleButton(R.drawable.ic_add, 44, 11, buttonBg, "Añadir a Mi Lista") { addToList() })
         row.addView(spacer(8))
-        row.addView(circleButton(R.drawable.ic_lock_open, 44, 11, buttonBg, "Bloquear pantalla") { setLocked(true) })
+        // Bloquear la pantalla solo tiene sentido en pantallas táctiles.
+        if (!tv) row.addView(circleButton(R.drawable.ic_lock_open, 44, 11, buttonBg, "Bloquear pantalla") { setLocked(true) })
         topBar.addView(row)
 
         // EPG: ahora / después, con barra de avance del programa.
@@ -1046,6 +1049,9 @@ class PlayerActivity : AppCompatActivity() {
         panel.addView(header)
         panelList = ListView(this).apply {
             adapter = panelAdapter
+            selector = ColorDrawable(Color.parseColor("#4400d4ff"))
+            itemsCanFocus = false
+            isFocusable = true
             divider = null
             dividerHeight = 0
             isVerticalScrollBarEnabled = true
@@ -1068,6 +1074,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun showControls() {
         if (locked || isInPip()) return
+        if (tv && !controls.hasFocus()) ui.post { if (controlsVisible && panelRoot.visibility != View.VISIBLE) btnPlay.requestFocus() }
         controlsVisible = true
         controls.visibility = View.VISIBLE
         controls.animate().cancel()
@@ -1081,6 +1088,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun hideControls() {
         controlsVisible = false
+        if (controls.hasFocus()) { gestureLayer.isFocusable = true; gestureLayer.requestFocus() }
         ui.removeCallbacks(hideControlsRunnable)
         ui.removeCallbacks(progressRunnable)
         controls.animate().cancel()
@@ -1158,6 +1166,7 @@ class PlayerActivity : AppCompatActivity() {
         bindTextButton(messageSecondary, secondary, onSecondary)
         (messagePrimary.parent as View).visibility = if (primary == null && secondary == null) View.GONE else View.VISIBLE
         messageBox.visibility = View.VISIBLE
+        if (tv) ui.post { if (messagePrimary.visibility == View.VISIBLE) messagePrimary.requestFocus() else if (messageSecondary.visibility == View.VISIBLE) messageSecondary.requestFocus() }
         loading.visibility = View.GONE
     }
 
@@ -1369,6 +1378,25 @@ class PlayerActivity : AppCompatActivity() {
     // TECLAS (control remoto / Android TV / teclado)
     // ═══════════════════════════════════════════════════════════════════
 
+    private val tv by lazy { isTvDevice(this) }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            val panelOpen = panelRoot.visibility == View.VISIBLE
+            val msgOpen = messageBox.visibility == View.VISIBLE
+            if (!controlsVisible && !panelOpen && !msgOpen && !locked) {
+                // Controles ocultos: las flechas manejan el video, no botones invisibles.
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT,
+                    KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
+                    KeyEvent.KEYCODE_NUMPAD_ENTER -> return onKeyDown(event.keyCode, event) || true
+                }
+            }
+            if (controlsVisible) scheduleHideControls()
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         val panelOpen = panelRoot.visibility == View.VISIBLE
         when (keyCode) {
@@ -1380,16 +1408,18 @@ class PlayerActivity : AppCompatActivity() {
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekBy(SEEK_STEP_MS); return true }
             KeyEvent.KEYCODE_MEDIA_REWIND -> { seekBy(-SEEK_STEP_MS); return true }
         }
+        if (keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_SETTINGS) { openSettings(); return true }
+        if (keyCode == KeyEvent.KEYCODE_GUIDE || keyCode == KeyEvent.KEYCODE_TV_INPUT) { openChannelList(); return true }
         if (!controlsVisible && !panelOpen && !locked) {
             when (keyCode) {
-                KeyEvent.KEYCODE_DPAD_UP -> if (isLive) { next(); return true }
-                KeyEvent.KEYCODE_DPAD_DOWN -> if (isLive) { prev(); return true }
-                KeyEvent.KEYCODE_DPAD_LEFT -> if (!isLive) { seekBy(-SEEK_STEP_MS); return true }
-                KeyEvent.KEYCODE_DPAD_RIGHT -> if (!isLive) { seekBy(SEEK_STEP_MS); return true }
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { showControls(); btnPlay.requestFocus(); return true }
+                // En vivo: arriba/abajo cambian de canal; izquierda/derecha abren la lista de canales.
+                KeyEvent.KEYCODE_DPAD_UP -> { if (isLive) next() else { showControls(); btnPlay.requestFocus() }; return true }
+                KeyEvent.KEYCODE_DPAD_DOWN -> { if (isLive) prev() else { showControls(); btnPlay.requestFocus() }; return true }
+                KeyEvent.KEYCODE_DPAD_LEFT -> { if (!isLive) seekBy(-SEEK_STEP_MS) else openChannelList(); return true }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> { if (!isLive) seekBy(SEEK_STEP_MS) else openChannelList(); return true }
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { showControls(); btnPlay.requestFocus(); return true }
             }
         }
-        if (controlsVisible) scheduleHideControls()
         return super.onKeyDown(keyCode, event)
     }
 
@@ -1424,6 +1454,7 @@ class PlayerActivity : AppCompatActivity() {
             panel.animate().translationX(0f).setDuration(200).start()
         }
         panelList.setSelection(if (selection > 2) selection - 2 else 0)
+        if (tv) ui.post { panelList.requestFocus(); panelList.setSelection(if (selection >= 0) selection else 0) }
     }
 
     private fun closePanel() {
@@ -1886,10 +1917,20 @@ class PlayerActivity : AppCompatActivity() {
             contentDescription = description
             val circle = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(bg) }
             val mask = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
-            background = RippleDrawable(ColorStateList.valueOf(Color.parseColor("#55FFFFFF")), circle, mask)
+            val normal = RippleDrawable(ColorStateList.valueOf(Color.parseColor("#55FFFFFF")), circle, mask)
+            val focused = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(if (bg == accent) accent else Color.parseColor("#AA0b1e30"))
+                setStroke(dp(3), if (bg == accent) Color.WHITE else accent)
+            }
+            background = StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_focused), focused)
+                addState(intArrayOf(), normal)
+            }
             setPadding(dp(padDp), dp(padDp), dp(padDp), dp(padDp))
             layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
             isFocusable = true
+            setOnFocusChangeListener { v, has -> v.animate().scaleX(if (has) 1.12f else 1f).scaleY(if (has) 1.12f else 1f).setDuration(120).start() }
             setOnClickListener {
                 onClick()
                 if (controlsVisible) scheduleHideControls()
@@ -1914,7 +1955,11 @@ class PlayerActivity : AppCompatActivity() {
         gravity = Gravity.CENTER
         val shape = rounded(bg, dp(22).toFloat())
         val mask = rounded(Color.WHITE, dp(22).toFloat())
-        background = RippleDrawable(ColorStateList.valueOf(Color.parseColor("#55FFFFFF")), shape, mask)
+        val focused = rounded(bg, dp(22).toFloat()).apply { setStroke(dp(3), if (bg == accent) Color.WHITE else accent) }
+        background = StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_focused), focused)
+            addState(intArrayOf(), RippleDrawable(ColorStateList.valueOf(Color.parseColor("#55FFFFFF")), shape, mask))
+        }
         setPadding(dp(20), dp(11), dp(20), dp(11))
         isFocusable = true
     }
