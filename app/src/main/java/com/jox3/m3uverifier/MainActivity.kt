@@ -72,6 +72,7 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(NativeChecker(), "NativeChecker")
         webView.addJavascriptInterface(NativePlayer(), "NativePlayer")
         webView.addJavascriptInterface(NativeFiles(), "NativeFiles")
+        webView.addJavascriptInterface(NativeApp(), "NativeApp")
 
         // Atrás: primero cierra modales/paneles del HTML, luego vuelve a la
         // pestaña principal y solo entonces sale de la app.
@@ -196,6 +197,27 @@ class MainActivity : AppCompatActivity() {
                 startActivity(intent)
             }
         }
+    }
+
+    inner class NativeApp {
+        /** Texto copiado en el teléfono (para detectar enlaces M3U). */
+        @JavascriptInterface
+        fun getClipboard(): String {
+            return try {
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                val clip = cm.primaryClip
+                if (clip != null && clip.itemCount > 0) clip.getItemAt(0).coerceToText(this@MainActivity)?.toString() ?: "" else ""
+            } catch (e: Exception) { "" }
+        }
+
+        /** Lista "Continuar viendo" que guarda el reproductor. */
+        @JavascriptInterface
+        fun getContinueWatching(): String = PlayerActivity.continueWatching(this@MainActivity)
+
+        @JavascriptInterface
+        fun appVersion(): String = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+        } catch (e: Exception) { "" }
     }
 
     inner class NativeFiles {
