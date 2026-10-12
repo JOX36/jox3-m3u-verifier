@@ -23,7 +23,24 @@ jobs:
       - name: Grant execute permission to gradlew
         run: chmod +x gradlew
 
+      # Llave de firma fija (secretos SIGNING_KEYSTORE_BASE64 y SIGNING_STORE_PASSWORD).
+      # Si no existen, se firma con la llave temporal de siempre.
+      - name: Prepare signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | tr -d ' \r\n' | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "Firma fija: activada"
+          else
+            echo "::warning::Sin secreto SIGNING_KEYSTORE_BASE64: el APK se firma con una llave temporal y no se podrá instalar encima de otra versión."
+          fi
+
       - name: Build Release APK
+        env:
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: jox3
         run: ./gradlew assembleRelease
 
       - name: Upload APK

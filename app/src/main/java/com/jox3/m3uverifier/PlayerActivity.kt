@@ -114,7 +114,15 @@ class PlayerActivity : AppCompatActivity() {
         private const val NEXT_EPISODE_SECONDS = 8
 
         private const val PREFS_PLAYER = "jox3_player"
-        private const val KEY_RESIZE = "resize_mode"
+        private const val KEY_RESIZE = "resize_mode_v2"
+
+        /**
+         * Pantalla completa inteligente: llena la pantalla recortando como máximo
+         * ~3 % por lado (la "zona segura" donde los canales nunca ponen logos ni
+         * textos) y completa el resto estirando un poco la imagen.
+         */
+        private const val RESIZE_SMART = 100
+        private const val SMART_MAX_ZOOM = 1.06f
         private const val PREFS_BRIDGE = "jox3_bridge"
         private const val KEY_PENDING_ADDS = "pending_adds"
 
@@ -140,7 +148,7 @@ class PlayerActivity : AppCompatActivity() {
     // ═══ Colores de la marca ═══
     private val accent = Color.parseColor("#00d4ff")
     private val muted = Color.parseColor("#8fb3cc")
-    private val panelBg = Color.parseColor("#F2081626")
+    private val panelBg = Color.parseColor("#B3081626")
     private val buttonBg = Color.parseColor("#5A0b1e30")
     private val liveRed = Color.parseColor("#ff3355")
 
@@ -160,7 +168,9 @@ class PlayerActivity : AppCompatActivity() {
     private var resumeOnStart = false
     private var videoW = 0
     private var videoH = 0
-    private var resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+    private var resizeMode = RESIZE_SMART
+    private var videoAspect = 0f
+    private var contentFrame: AspectRatioFrameLayout? = null
     private var sleepAtMs = 0L
     private var countdownLeft = 0
     private var epgToken = 0
@@ -285,7 +295,7 @@ class PlayerActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         resizeMode = getSharedPreferences(PREFS_PLAYER, MODE_PRIVATE)
-            .getInt(KEY_RESIZE, AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
+            .getInt(KEY_RESIZE, RESIZE_SMART)
         setupEdgeToEdge()
         parsePayload(readPayload(intent))
         buildUi()
@@ -478,6 +488,9 @@ class PlayerActivity : AppCompatActivity() {
             if (videoSize.width <= 0 || videoSize.height <= 0) return
             videoW = videoSize.width
             videoH = videoSize.height
+            videoAspect = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
+            // PlayerView ajusta su marco con este mismo evento; aplicamos el nuestro después.
+            ui.post { applyResize() }
             resBadge.text = resolutionLabel(videoSize.height)
             resBadge.visibility = View.VISIBLE
             updatePipParams()
@@ -708,11 +721,16 @@ class PlayerActivity : AppCompatActivity() {
 
         playerView = PlayerView(this).apply {
             useController = false
-            resizeMode = this@PlayerActivity.resizeMode
             setShutterBackgroundColor(Color.BLACK)
             setKeepContentOnPlayerReset(true)
         }
         root.addView(playerView, matchParent())
+        contentFrame = playerView.findViewById(androidx.media3.ui.R.id.exo_content_frame)
+        applyResize()
+        root.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, orr, ob ->
+            // Pantalla girada, ventana flotante, multiventana: recalcular el ajuste.
+            if (r - l != orr - ol || b - t != ob - ot) ui.post { applyResize() }
+        }
 
         gestureLayer = View(this)
         root.addView(gestureLayer, matchParent())
@@ -974,7 +992,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun buildPanel() {
         panelRoot = FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor("#66000000"))
+            setBackgroundColor(Color.parseColor("#26000000"))
             visibility = View.GONE
             setOnClickListener { closePanel() }
         }
@@ -1226,7 +1244,7 @@ class PlayerActivity : AppCompatActivity() {
                 return true
             }
             override fun onScaleEnd(detector: ScaleGestureDetector) {
-                if (scaleAccum > 1.08f) setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM)
+                if (scaleAccum > 1.08f) setResizeMode(RESIZE_SMART)
                 else if (scaleAccum < 0.92f) setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT)
             }
         })
@@ -1283,9 +1301,29 @@ class PlayerActivity : AppCompatActivity() {
         showIndicator(R.drawable.ic_brightness, "${(f * 100).roundToInt()}%", (f * 100).roundToInt())
     }
 
+    private fun applyResize() {
+        val frame = contentFrame
+        if (resizeMode != RESIZE_SMART) {
+            playerView.resizeMode = resizeMode
+            if (videoAspect > 0f) frame?.setAspectRatio(videoAspect)
+            return
+        }
+        playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        if (frame == null || videoAspect <= 0f) return
+        val w = root.width
+        val h = root.height
+        if (w <= 0 || h <= 0 || isInPip()) { frame.setAspectRatio(videoAspect); return }
+        val screen = w.toFloat() / h
+        // El marco toma una proporción intermedia entre el video y la pantalla:
+        // recorta hasta SMART_MAX_ZOOM y el resto de la diferencia se estira.
+        val target = if (screen >= videoAspect) maxOf(videoAspect, screen / SMART_MAX_ZOOM)
+        else minOf(videoAspect, screen * SMART_MAX_ZOOM)
+        frame.setAspectRatio(target)
+    }
+
     private fun setResizeMode(mode: Int) {
         resizeMode = mode
-        playerView.resizeMode = mode
+        applyResize()
         getSharedPreferences(PREFS_PLAYER, MODE_PRIVATE).edit().putInt(KEY_RESIZE, mode).apply()
         showOsd(resizeLabel(mode))
     }
@@ -1293,7 +1331,8 @@ class PlayerActivity : AppCompatActivity() {
     private fun resizeLabel(mode: Int) = when (mode) {
         AspectRatioFrameLayout.RESIZE_MODE_FIT -> "Ver video completo"
         AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Estirar a la pantalla"
-        else -> "Llenar pantalla"
+        AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Acercar (recorta más)"
+        else -> "Pantalla completa"
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1461,9 +1500,10 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun openResizeMenu() {
         val modes = listOf(
-            AspectRatioFrameLayout.RESIZE_MODE_ZOOM to "Ocupa toda la pantalla, recorta un poco los bordes",
+            RESIZE_SMART to "Borde a borde sin cortar logos ni textos (recomendado)",
             AspectRatioFrameLayout.RESIZE_MODE_FIT to "Se ve el video entero, puede dejar franjas",
-            AspectRatioFrameLayout.RESIZE_MODE_FILL to "Llena sin recortar, deforma un poco la imagen"
+            AspectRatioFrameLayout.RESIZE_MODE_FILL to "Llena sin recortar, deforma la imagen",
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM to "Llena sin deformar, recorta arriba y abajo"
         )
         val rows = modes.map { (mode, detail) ->
             Row(resizeLabel(mode), detail, mode == resizeMode) { setResizeMode(mode); openSettings() }
