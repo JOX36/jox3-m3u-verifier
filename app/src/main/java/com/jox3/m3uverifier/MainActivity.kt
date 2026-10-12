@@ -2,10 +2,19 @@ package com.jox3.m3uverifier
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
-import android.webkit.*
+import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ExecutorService
@@ -14,10 +23,19 @@ import java.util.concurrent.Executors
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private var pageLoaded = false
 
     // Pool de hilos para verificar canales en paralelo sin bloquear la UI.
-    // 6 hilos es un límite razonable para no saturar la red del celular.
-    private val checkExecutor: ExecutorService = Executors.newFixedThreadPool(6)
+    // Se recrea al cambiar de categoría para no seguir revisando la anterior.
+    @Volatile
+    private var checkExecutor: ExecutorService = Executors.newFixedThreadPool(6)
+
+    // Guardar la lista .m3u: el usuario elige dónde (Descargas, Drive, etc.).
+    // Las descargas tipo "blob:" del HTML no funcionan dentro de un WebView.
+    private var pendingFileContent: String? = null
+    private val createDocument = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("audio/x-mpegurl")
+    ) { uri: Uri? -> writePendingFile(uri) }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,7 +47,9 @@ class MainActivity : AppCompatActivity() {
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
-            allowFileAccessFromFileURLs = true
+            // El HTML hace sus peticiones con fetch hacia servidores http/https
+            // de terceros (paneles Xtream); no necesita leer otros archivos locales.
+            allowFileAccessFromFileURLs = false
             allowUniversalAccessFromFileURLs = true
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             useWideViewPort = true
@@ -38,37 +58,56 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webChromeClient = WebChromeClient()
-
         webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(
-                view: WebView, request: WebResourceRequest
-            ) = false
-        }
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = false
 
-        // Puente JS -> Kotlin. Desde el HTML se llama como:
-        // window.NativeChecker.checkStream(url, id)
-        // Esto evita CORS por completo, porque la petición HTTP la hace
-        // Kotlin (HttpURLConnection), no el navegador dentro del WebView.
-        webView.addJavascriptInterface(NativeChecker(), "NativeChecker")
-
-        // Puente JS -> Kotlin para el reproductor. Desde el HTML:
-        // window.NativePlayer.play(url, titulo, categoria)
-        // Abre PlayerActivity (ExoPlayer). Cuando el usuario toque "Añadir a
-        // Mi Lista" ahí dentro, este callback le avisa al WebView.
-        PlayerActivity.onAddToList = { name, url, category ->
-            val safeName = JSONObject.quote(name)
-            val safeUrl = JSONObject.quote(url)
-            val safeCategory = JSONObject.quote(category)
-            runOnUiThread {
-                webView.evaluateJavascript(
-                    "window.onNativeAddToList && window.onNativeAddToList($safeName,$safeUrl,$safeCategory);",
-                    null
-                )
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                pageLoaded = true
+                deliverPendingAdds()
             }
         }
+
+        // Puentes JS -> Kotlin.
+        webView.addJavascriptInterface(NativeChecker(), "NativeChecker")
         webView.addJavascriptInterface(NativePlayer(), "NativePlayer")
+        webView.addJavascriptInterface(NativeFiles(), "NativeFiles")
+
+        // Atrás: primero cierra modales/paneles del HTML, luego vuelve a la
+        // pestaña principal y solo entonces sale de la app.
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                webView.evaluateJavascript("(window.handleBack && window.handleBack()) ? 'yes' : 'no'") { result ->
+                    if (result?.contains("yes") != true) {
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                        isEnabled = true
+                    }
+                }
+            }
+        })
 
         webView.loadUrl("file:///android_asset/index.html")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (pageLoaded) deliverPendingAdds()
+    }
+
+    /** Pasa al HTML los items que el usuario añadió desde el reproductor. */
+    private fun deliverPendingAdds() {
+        val pending = PlayerActivity.takePendingAdds(this)
+        for (i in 0 until pending.length()) {
+            val o = pending.optJSONObject(i) ?: continue
+            val name = JSONObject.quote(o.optString("name"))
+            val url = JSONObject.quote(o.optString("url"))
+            val cat = JSONObject.quote(o.optString("category"))
+            webView.evaluateJavascript(
+                "window.onNativeAddToList && window.onNativeAddToList($name,$url,$cat);",
+                null
+            )
+        }
     }
 
     /**
@@ -112,39 +151,85 @@ class MainActivity : AppCompatActivity() {
 
     inner class NativeChecker {
         /**
-         * Llamado desde JavaScript. No bloquea: dispara la verificación en un
-         * hilo del pool y, cuando termina, llama de vuelta a
-         * window.onStreamChecked(id, online) dentro del WebView.
+         * No bloquea: dispara la verificación en un hilo del pool y, cuando
+         * termina, llama de vuelta a window.onStreamChecked(id, online).
          */
         @JavascriptInterface
         fun checkStream(url: String, id: String) {
-            checkExecutor.execute {
-                val online = checkStreamUrl(url)
-                runOnUiThread {
-                    val safeId = JSONObject.quote(id) // evita romper el JS si el id trae caracteres raros
-                    webView.evaluateJavascript(
-                        "window.onStreamChecked && window.onStreamChecked($safeId, $online);",
-                        null
-                    )
+            val executor = checkExecutor
+            if (executor.isShutdown) return
+            try {
+                executor.execute {
+                    val online = checkStreamUrl(url)
+                    if (executor.isShutdown) return@execute // ya se canceló esta tanda
+                    runOnUiThread {
+                        val safeId = JSONObject.quote(id)
+                        webView.evaluateJavascript(
+                            "window.onStreamChecked && window.onStreamChecked($safeId, $online);",
+                            null
+                        )
+                    }
                 }
-            }
+            } catch (e: Exception) { /* pool cancelado mientras se encolaba */ }
+        }
+
+        /** Cancela las verificaciones pendientes (al cambiar de categoría o búsqueda). */
+        @JavascriptInterface
+        fun cancelAll() {
+            val old = checkExecutor
+            checkExecutor = Executors.newFixedThreadPool(6)
+            old.shutdownNow()
         }
     }
 
     inner class NativePlayer {
         @JavascriptInterface
         fun play(payloadJson: String) {
+            // La lista va en un archivo: una categoría grande supera el límite
+            // de ~1 MB de un Intent y antes cerraba la app.
+            val file = File(cacheDir, "player_payload.json")
+            try { file.writeText(payloadJson) } catch (e: Exception) { }
             runOnUiThread {
                 val intent = Intent(this@MainActivity, PlayerActivity::class.java)
-                intent.putExtra("payload", payloadJson)
+                if (file.exists() && file.length() > 0) intent.putExtra(PlayerActivity.EXTRA_PAYLOAD_FILE, file.absolutePath)
+                else intent.putExtra(PlayerActivity.EXTRA_PAYLOAD, payloadJson)
                 startActivity(intent)
             }
         }
     }
 
-    override fun onBackPressed() {
-        if (webView.canGoBack()) webView.goBack()
-        else super.onBackPressed()
+    inner class NativeFiles {
+        @JavascriptInterface
+        fun saveTextFile(content: String, fileName: String) {
+            runOnUiThread {
+                pendingFileContent = content
+                try {
+                    createDocument.launch(fileName)
+                } catch (e: Exception) {
+                    pendingFileContent = null
+                    notifyJs("❌ No se pudo abrir el selector de archivos", "err")
+                }
+            }
+        }
+    }
+
+    private fun writePendingFile(uri: Uri?) {
+        val content = pendingFileContent
+        pendingFileContent = null
+        if (uri == null || content == null) return
+        try {
+            contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray(Charsets.UTF_8)) }
+            notifyJs("📥 Lista guardada", "ok")
+        } catch (e: Exception) {
+            notifyJs("❌ No se pudo guardar el archivo", "err")
+        }
+    }
+
+    private fun notifyJs(message: String, type: String) {
+        webView.evaluateJavascript(
+            "window.toast && toast(${JSONObject.quote(message)}, ${JSONObject.quote(type)});",
+            null
+        )
     }
 
     override fun onDestroy() {
