@@ -469,7 +469,12 @@ function copyText(txt){
   if(navigator.clipboard){navigator.clipboard.writeText(txt).then(()=>toast('📋 Copiado','ok'));}
   else{const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast('📋 Copiado','ok');}
 }
-function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function escHtml(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+// Para pasar texto dentro de onclick="fn(...)": JSON lo vuelve un string JS válido
+// (aunque traiga apóstrofes, comillas o barras) y escHtml lo protege en el atributo.
+function jsArg(v){return escHtml(JSON.stringify(String(v??'')));}
+// Extensión real del archivo (mkv, avi, mp4…): antes todo se pedía como .mp4.
+function vodExt(it){return (it&&it.container_extension)||'mp4';}
 
 // ═══ VERIFICAR ═══
 async function verifyM3U(){
@@ -533,16 +538,16 @@ function renderResult(ui,geo,live,series,vod,m3uLink,epgLink){
     <div class="info-item"><span class="info-label">🌐 Host</span><span class="info-value">${escHtml(S.session.host)}</span></div>
     <div class="info-item"><span class="info-label">👤 Usuario</span><span class="info-value">${escHtml(S.session.username)}</span></div>
     <div class="info-item"><span class="info-label">🔑 Contraseña</span><span class="info-value">${escHtml(S.session.password)}</span></div>
-    <div class="info-item"><span class="info-label">🟢 Estado</span><span class="info-value"><span class="badge badge-active">${ui.status}</span></span></div>
-    <div class="info-item"><span class="info-label">🔗 Conexiones</span><span class="info-value">${ui.active_cons||0} / ${ui.max_connections||0}</span></div>
+    <div class="info-item"><span class="info-label">🟢 Estado</span><span class="info-value"><span class="badge badge-active">${escHtml(ui.status)}</span></span></div>
+    <div class="info-item"><span class="info-label">🔗 Conexiones</span><span class="info-value">${escHtml(ui.active_cons||0)} / ${escHtml(ui.max_connections||0)}</span></div>
     <div class="info-item"><span class="info-label">📅 Creado</span><span class="info-value">${formatTs(ui.created_at)}</span></div>
     <div class="info-item"><span class="info-label">🗓️ Vence</span><span class="info-value">${expStr}</span></div>
     <div class="info-item"><span class="info-label">⌛ Días restantes</span><span class="info-value ${daysClass(remDays)}">${remDays!==null?remDays:'N/A'} ${semaforo(remDays)}</span></div>
-    <div class="info-item"><span class="info-label">🕒 Timezone</span><span class="info-value">${geo.timezone||'N/A'}</span></div>
-    <div class="info-item"><span class="info-label">📍 Ubicación</span><span class="info-value">${flag} ${[geo.city,geo.country].filter(Boolean).join(', ')||'N/A'}</span></div>
-    <div class="info-item"><span class="info-label">🏢 ISP</span><span class="info-value">${geo.isp||'N/A'}</span></div>
+    <div class="info-item"><span class="info-label">🕒 Timezone</span><span class="info-value">${escHtml(geo.timezone||'N/A')}</span></div>
+    <div class="info-item"><span class="info-label">📍 Ubicación</span><span class="info-value">${flag} ${escHtml([geo.city,geo.country].filter(Boolean).join(', ')||'N/A')}</span></div>
+    <div class="info-item"><span class="info-label">🏢 ISP</span><span class="info-value">${escHtml(geo.isp||'N/A')}</span></div>
     <div class="info-item"><span class="info-label">🧪 Trial</span><span class="info-value">${ui.is_trial==='1'?'Sí ⚠️':'No'}</span></div>
-    <div class="info-item"><span class="info-label">🎞️ Formatos</span><span class="info-value">${(ui.allowed_output_formats||[]).join(', ')||'N/A'}</span></div>
+    <div class="info-item"><span class="info-label">🎞️ Formatos</span><span class="info-value">${escHtml((ui.allowed_output_formats||[]).join(', ')||'N/A')}</span></div>
     <div class="info-item"><span class="info-label">📡 TV en Vivo</span><span class="info-value" style="color:var(--accent)">${live.length} categorías</span></div>
     <div class="info-item"><span class="info-label">🎬 Series</span><span class="info-value" style="color:var(--accent)">${series.length} categorías</span></div>
     <div class="info-item"><span class="info-label">🎥 Películas</span><span class="info-value" style="color:var(--accent)">${vod.length} categorías</span></div>
@@ -569,7 +574,7 @@ function renderCatBlock(title,cats,type){
   const items=cats.slice(0,60).map(c=>{
     const name=typeof c==='string'?c:(c.category_name||'Sin nombre');
     const id=typeof c==='object'?(c.category_id||''):'';
-    return`<div class="cat-item" onclick="gotoExplore('${type}','${id}')">${escHtml(name)} <span style="color:var(--muted);font-size:.7rem">→</span></div>`;
+    return`<div class="cat-item" onclick="gotoExplore('${type}',${jsArg(id)})">${escHtml(name)} <span style="color:var(--muted);font-size:.7rem">→</span></div>`;
   }).join('');
   return`<div style="margin-bottom:8px">
     <div class="cat-header" onclick="toggleCat(this)">${title} <span style="color:var(--muted);font-size:.75rem">(${cats.length})</span><span class="chevron">▼</span></div>
@@ -594,7 +599,7 @@ async function loadExploreType(type,catId=null){
   document.getElementById('explore-cats').innerHTML=cats.map((c,i)=>{
     const name=c.category_name||'Sin nombre',id=c.category_id||i;
     return`<div class="cat-block">
-      <div class="cat-header-x" id="ehead-${i}" onclick="toggleExploreCat(${i},'${id}','${escHtml(name)}')">
+      <div class="cat-header-x" id="ehead-${i}" onclick="toggleExploreCat(${i},${jsArg(id)},${jsArg(name)})">
         <span>${escHtml(name)}</span><span class="chevron">▼</span>
       </div>
       <div class="cat-body-x" id="ebody-${i}"><div class="cat-body-inner" id="einner-${i}"></div></div>
@@ -700,6 +705,7 @@ async function checkAllStreamsBackground(items){
   const hasNative=!!(window.NativeChecker&&window.NativeChecker.checkStream);
 
   if(hasNative){
+    if(window.NativeChecker.cancelAll)window.NativeChecker.cancelAll();
     // ✅ Verificación real: Kotlin hace la petición HTTP (sin límite de CORS,
     // porque CORS solo aplica dentro del navegador/WebView, no del lado nativo).
     // Devuelve el código de estado real, no una respuesta "opaca".
@@ -797,7 +803,7 @@ function buildPlaylistAndPlay(idx,type){
     const sid=it.stream_id||it.series_id||0;
     const url=type==='live'
       ?`${host}/live/${username}/${password}/${sid}.ts`
-      :`${host}/movie/${username}/${password}/${sid}.mp4`;
+      :`${host}/movie/${username}/${password}/${sid}.${vodExt(it)}`;
     return{name:it.name||it.title||'Sin nombre',url,streamId:String(sid),isLive};
   });
   const payload={apiUrl,items,startIndex:idx,category:{live:'TV en Vivo',series:'Series',vod:'Películas'}[type]};
@@ -867,14 +873,14 @@ async function openModal(item,type){
       const eps=info.episodes||{};
       document.getElementById('modal-seasons').innerHTML=Object.keys(eps).map(snum=>{
         const epList=eps[snum];
-        return`<div class="season-item" onclick="toggleSeason('s-${snum}')">
+        return`<div class="season-item" onclick="toggleSeason(${jsArg('s-'+snum)})">
           📚 Temporada ${snum} — ${epList.length} episodios
-          <div id="s-${snum}" style="display:none;margin-top:10px">
-            <button class="btn btn-sm btn-warn" style="width:100%;margin-bottom:6px" onclick="event.stopPropagation();addSeason('${snum}')">Añadir T${snum} completa</button>
+          <div id="${escHtml('s-'+snum)}" style="display:none;margin-top:10px">
+            <button class="btn btn-sm btn-warn" style="width:100%;margin-bottom:6px" onclick="event.stopPropagation();addSeason(${jsArg(snum)})">Añadir T${snum} completa</button>
             ${epList.map((ep,i)=>`<div class="ep-item" style="justify-content:space-between">
               <span style="flex:1" onclick="event.stopPropagation()">📖 Ep.${i+1} ${escHtml(ep.title||'')}</span>
-              <button class="btn btn-sm btn-play" onclick="event.stopPropagation();playEpisode('${snum}',${i})">▶</button>
-              <button class="btn btn-sm btn-success" onclick="event.stopPropagation();addEpisode('${snum}',${i})">+</button>
+              <button class="btn btn-sm btn-play" onclick="event.stopPropagation();playEpisode(${jsArg(snum)},${i})">▶</button>
+              <button class="btn btn-sm btn-success" onclick="event.stopPropagation();addEpisode(${jsArg(snum)},${i})">+</button>
             </div>`).join('')}
           </div>
         </div>`;
@@ -891,7 +897,7 @@ function confirmAdd(){
   let url='';
   if(type==='live')url=`${host}/live/${username}/${password}/${item.stream_id}.ts`;
   else if(type==='series')url=`${host}/series/${username}/${password}/${item.series_id}.m3u8`;
-  else url=`${host}/movie/${username}/${password}/${item.stream_id}.mp4`;
+  else url=`${host}/movie/${username}/${password}/${item.stream_id}.${vodExt(item)}`;
   addToList({name:item.name||item.title||'Sin nombre',url,category:{live:'TV en Vivo',series:'Series',vod:'Películas'}[type],synopsis,thumbnail});
   closeModal();
 }
@@ -1019,6 +1025,19 @@ function deleteHistory(idx){
   }catch{}
 }
 
+// Llamado por Kotlin al tocar Atrás. Devuelve true si lo manejó la página.
+window.handleBack=function(){
+  const modal=document.getElementById('modal-overlay');
+  if(modal&&modal.classList.contains('active')){closeModal();return true;}
+  const skin=document.getElementById('skin-panel');
+  if(skin&&skin.classList.contains('open')){skin.classList.remove('open');return true;}
+  const hist=document.getElementById('history-panel');
+  if(hist&&hist.style.display!=='none'){hist.style.display='none';return true;}
+  const verify=document.getElementById('panel-verify');
+  if(verify&&!verify.classList.contains('active')){switchTab('verify');return true;}
+  return false;
+};
+
 // Load saved config + skin (after all functions defined)
 (function(){
   try{
@@ -1027,13 +1046,24 @@ function deleteHistory(idx){
     if(cfg.chatId){S.tgChatId=cfg.chatId;document.getElementById('tg-chatid').value=S.tgChatId;}
     if(cfg.skin)setSkin(cfg.skin,false);
   }catch(e){}
+  loadMyList();
 })();
 
 // ═══ MI LISTA ═══
+function saveMyList(){
+  try{localStorage.setItem('jox3mylist',JSON.stringify({items:S.myList,thumbs:S.thumbnails}));}catch{}
+}
+function loadMyList(){
+  try{
+    const d=JSON.parse(localStorage.getItem('jox3mylist')||'null');
+    if(d&&Array.isArray(d.items)){S.myList=d.items;S.thumbnails=Array.isArray(d.thumbs)?d.thumbs:[];}
+  }catch{}
+  renderMyList();
+}
 function addToList(entry){
   S.myList.push(entry);
   S.thumbnails.push({name:entry.name,url:entry.thumbnail||'',description:`*${entry.name}*\n${entry.category}\n${entry.synopsis||''}`});
-  renderMyList();toast(`✅ ${entry.name}`,'ok');
+  saveMyList();renderMyList();toast(`✅ ${entry.name}`,'ok');
 }
 function renderMyList(){
   document.getElementById('list-count').textContent=`(${S.myList.length})`;
@@ -1041,23 +1071,25 @@ function renderMyList(){
   if(!S.myList.length){el.innerHTML='<div class="empty-state"><div class="icon">📋</div><p>Tu lista está vacía.<br>Explora o busca contenido para añadir.</p></div>';return;}
   el.innerHTML=S.myList.map((item,i)=>`
     <div class="list-item">
-      <img class="list-item-thumb" src="${item.thumbnail||''}" onerror="this.style.display='none'">
-      <div style="flex:1;min-width:0"><div class="li-name">${escHtml(item.name)}</div><div class="li-cat">${item.category}</div></div>
+      <img class="list-item-thumb" src="${escHtml(item.thumbnail||'')}" onerror="this.style.display='none'">
+      <div style="flex:1;min-width:0"><div class="li-name">${escHtml(item.name)}</div><div class="li-cat">${escHtml(item.category)}</div></div>
       <button class="btn btn-sm btn-danger" onclick="removeFromList(${i})">✖</button>
     </div>`).join('');
 }
-function removeFromList(idx){S.myList.splice(idx,1);S.thumbnails.splice(idx,1);renderMyList();}
+function removeFromList(idx){S.myList.splice(idx,1);S.thumbnails.splice(idx,1);saveMyList();renderMyList();}
 function clearList(){
   if(!S.myList.length)return;if(!confirm('¿Limpiar toda la lista?'))return;
-  S.myList=[];S.thumbnails=[];renderMyList();toast('Lista limpiada','info');
+  S.myList=[];S.thumbnails=[];saveMyList();renderMyList();toast('Lista limpiada','info');
 }
 function downloadM3U(){
   if(!S.myList.length){toast('La lista está vacía','err');return;}
   let c='#EXTM3U\n';
-  S.myList.forEach(item=>{c+=`#EXTINF:-1 category="${item.category}",${item.name}\n${item.url}\n`;});
+  S.myList.forEach(item=>{c+=`#EXTINF:-1 group-title="${String(item.category||'').replace(/"/g,"'")}",${item.name}\n${item.url}\n`;});
+  const fname=`ListaJOX3_${new Date().toISOString().slice(0,10)}.m3u`;
+  if(window.NativeFiles&&window.NativeFiles.saveTextFile){window.NativeFiles.saveTextFile(c,fname);return;}
   const blob=new Blob([c],{type:'audio/x-mpegurl'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-  a.download=`ListaJOX3_${new Date().toISOString().slice(0,10)}.m3u`;a.click();
+  a.download=fname;a.click();
   toast('📥 Lista descargada','ok');
 }
 
@@ -1205,7 +1237,7 @@ async function sendListToTelegram(){
   if(!token||!chatId){toast('Configura Telegram primero','err');switchTab('config');return;}
   try{
     toast('📤 Enviando lista...','info');
-    let c='#EXTM3U\n';S.myList.forEach(item=>{c+=`#EXTINF:-1 category="${item.category}",${item.name}\n${item.url}\n`;});
+    let c='#EXTM3U\n';S.myList.forEach(item=>{c+=`#EXTINF:-1 group-title="${String(item.category||'').replace(/"/g,"'")}",${item.name}\n${item.url}\n`;});
     await tgSendDoc(token,chatId,c,`ListaJOX3_${new Date().toISOString().slice(0,10)}.m3u`);
     toast('✅ Lista enviada','ok');
     let sent=0;
