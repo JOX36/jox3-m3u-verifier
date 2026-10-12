@@ -578,8 +578,11 @@ class PlayerActivity : AppCompatActivity() {
             return
         }
         val detail = describeError(error)
-        val isNetwork = error.errorCode in 2000..2999
-        if (isNetwork && retryCount < MAX_RETRIES) {
+        // Un 4xx (403, 404…) es una respuesta del servidor, no un corte: reintentar
+        // no sirve y puede empeorar un bloqueo de la IP. Solo se reintentan cortes y 5xx.
+        val http = (error.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode
+        val retryable = error.errorCode in 2000..2999 && (http == null || http >= 500)
+        if (retryable && retryCount < MAX_RETRIES) {
             retryCount++
             showMessage("Reconectando… ($retryCount/$MAX_RETRIES)", detail)
             ui.removeCallbacks(retryRunnable)
@@ -601,7 +604,7 @@ class PlayerActivity : AppCompatActivity() {
         return when {
             http == 401 || http == 403 ->
                 "El servidor rechazó la conexión (HTTP $http). Puede que la cuenta tenga todas sus conexiones en uso o esté vencida."
-            http == 404 -> "El servidor no tiene este contenido (HTTP 404)."
+            http == 404 -> "El servidor respondió HTTP 404: no encuentra este contenido o está rechazando la conexión (bloqueo temporal o conexiones de la cuenta en uso)."
             http != null -> "El servidor respondió con un error (HTTP $http)."
             error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ->
                 "No se pudo conectar con el servidor. Revisa tu internet."

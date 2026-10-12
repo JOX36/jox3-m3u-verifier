@@ -119,6 +119,16 @@ function copyText(txt, label = 'Copiado') {
     document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); done(); } catch { toast('No se pudo copiar', 'err'); } ta.remove();
   }
 }
+function errorState(ic, e, retryJs) {
+  const retry = `<button class="btn" onclick="clearRejected();${retryJs}">${icon('refresh')}Reintentar</button>`;
+  const diag = S.activeId ? `<button class="btn" onclick="runDiagnostics()">${icon('info')}Probar conexión</button>` : '';
+  if (e && REJECT.has(e.status)) {
+    return `<div class="empty"><div class="ic" style="color:var(--off)">${icon(ic)}</div><b>El servidor está rechazando las conexiones</b>
+      <p>${esc(e.message)}. Suele pasar cuando el servidor bloquea tu IP unos minutos por recibir muchas solicitudes seguidas, o cuando la cuenta ya usa todas sus conexiones. Cierra otros reproductores con esta cuenta, espera 5 a 10 minutos y vuelve a intentar.</p>
+      <div class="list-actions" style="justify-content:center">${retry}${diag}</div></div>`;
+  }
+  return `<div class="empty"><div class="ic">${icon(ic)}</div><b>No se pudo cargar</b><p>${esc(e ? e.message : '')}</p><div class="list-actions" style="justify-content:center">${retry}${diag}</div></div>`;
+}
 function emptyState(ic, title, text, btn) {
   return `<div class="empty"><div class="ic">${icon(ic)}</div><b>${esc(title)}</b><p>${esc(text)}</p>${btn || ''}</div>`;
 }
@@ -164,11 +174,29 @@ const idb = (() => {
 })();
 
 /* ═══════════════════════════ RED / API XTREAM ═══════════════════════════ */
-async function apiGet(url, timeoutMs = 25000) {
+// Códigos con los que un panel suele indicar "te bloqueé" o "no hay conexiones libres".
+const REJECT = new Set([401, 403, 404, 429, 503, 509]);
+const ACTION_LABEL = {
+  '': 'el acceso a la cuenta', get_live_categories: 'las categorías de TV', get_vod_categories: 'las categorías de películas',
+  get_series_categories: 'las categorías de series', get_live_streams: 'los canales', get_vod_streams: 'las películas',
+  get_series: 'las series', get_vod_info: 'la ficha de la película', get_series_info: 'los episodios', get_short_epg: 'la guía',
+};
+function actionOf(url) { try { return new URL(url).searchParams.get('action') || ''; } catch { return ''; } }
+// Freno: cuando el servidor rechaza, se pausan verificaciones y guía para no empeorar un bloqueo.
+function markRejected() { S.rejectedAt = Date.now(); stopChecks(); epgQueue.length = 0; }
+function isRejecting() { return Date.now() - (S.rejectedAt || 0) < 3 * 60e3; }
+function clearRejected() { S.rejectedAt = 0; }
+async function apiGet(url, timeoutMs = 25000, opts = {}) {
   const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, { credentials: 'omit', signal: ctrl.signal });
-    if (!res.ok) throw new Error(`El servidor respondió HTTP ${res.status}`);
+    if (!res.ok) {
+      const what = ACTION_LABEL[actionOf(url)] || 'los datos';
+      const err = new Error(`El servidor respondió HTTP ${res.status} al pedir ${what}`);
+      err.status = res.status;
+      if (REJECT.has(res.status) && !opts.noBrake && /player_api\.php/.test(url)) markRejected();
+      throw err;
+    }
     const text = await res.text();
     try { return JSON.parse(text); } catch { throw new Error('El servidor no devolvió datos válidos'); }
   } catch (e) {
@@ -559,11 +587,51 @@ function openAccountPage(id) {
     <div class="list-actions" style="margin-top:12px">
       ${id !== S.activeId ? `<button class="btn sm primary" onclick="closeTop();activateAccount(${jsArg(id)})">${icon('check')}Usar esta cuenta</button>` : ''}
       <button class="btn sm" onclick="${id === S.activeId ? 'refreshActive()' : `reverify(${jsArg(id)})`}">${icon('refresh')}Verificar de nuevo</button>
+      ${id === S.activeId ? `<button class="btn sm" onclick="runDiagnostics()">${icon('info')}Probar conexión</button>` : ''}
       ${id === S.activeId ? `<button class="btn sm" onclick="sendToTelegram()">${icon('send')}Telegram</button>` : ''}
       <button class="btn sm danger" onclick="deleteAccount(${jsArg(id)})">${icon('trash')}Eliminar</button>
     </div>
     ${catBlock('live', 'Categorías de TV')}${catBlock('vod', 'Categorías de películas')}${catBlock('series', 'Categorías de series')}`;
   showPage('page-account');
+}
+
+/* ═══════════════════════════ DIAGNÓSTICO ═══════════════════════════ */
+let diagResolve = null;
+async function runDiagnostics() {
+  const acc = activeAccount(); if (!acc || !S.session) { toast('Primero elige una cuenta', 'err'); return; }
+  clearRejected(); stopChecks();
+  showSheet('Probar conexión', `<div class="hint" style="margin-bottom:6px">Hace unas pocas solicitudes al servidor, una por una, para ver qué responde.</div><div class="steps" id="diag-steps"></div><div id="diag-result" style="margin-top:14px"></div>`);
+  const steps = $('diag-steps'), api = S.session.apiUrl, out = [];
+  const add = (label) => { const d = document.createElement('div'); d.innerHTML = `<span class="st"><span class="spinner"></span></span>${esc(label)}`; steps.appendChild(d); return d; };
+  const done = (row, ok, label) => { row.className = ok ? 'ok' : 'err'; row.innerHTML = `<span class="st">${icon(ok ? 'check' : 'close')}</span>${esc(label)}`; };
+  async function step(label, fn) {
+    const row = add(label), t0 = Date.now();
+    try { const msg = await fn(); done(row, true, `${label}: ${msg} (${((Date.now() - t0) / 1000).toFixed(1)} s)`); out.push({ ok: true }); return true; }
+    catch (e) { done(row, false, `${label}: ${e.message}`); out.push({ ok: false, status: e.status }); return false; }
+  }
+  const cat = (catsOf('live')[0] || {}).category_id;
+  let firstChannel = null;
+  await step('Acceso a la cuenta', async () => { const d = await apiGet(api, 15000, { noBrake: true }); if (!d.user_info) throw new Error('respuesta inválida'); return d.user_info.status || 'ok'; });
+  await step('Categorías de TV', async () => { const d = await apiGet(`${api}&action=get_live_categories`, 15000, { noBrake: true }); return `${(d || []).length} categorías`; });
+  if (cat !== undefined) await step('Canales de la primera categoría', async () => { const d = await apiGet(`${api}&action=get_live_streams&category_id=${encodeURIComponent(cat)}`, 20000, { noBrake: true }); firstChannel = (d || [])[0]; return `${(d || []).length} canales`; });
+  const vcat = (catsOf('vod')[0] || {}).category_id;
+  if (vcat !== undefined) await step('Películas de la primera categoría', async () => { const d = await apiGet(`${api}&action=get_vod_streams&category_id=${encodeURIComponent(vcat)}`, 20000, { noBrake: true }); return `${(d || []).length} películas`; });
+  if (firstChannel && window.NativeChecker) {
+    await step(`Abrir el canal ${itemName(firstChannel)}`, () => new Promise((res, rej) => {
+      const t = setTimeout(() => { diagResolve = null; rej(new Error('sin respuesta')); }, 15000);
+      diagResolve = ok => { clearTimeout(t); diagResolve = null; ok ? res('responde') : rej(new Error('no responde')); };
+      NativeChecker.checkStream(streamUrl('live', firstChannel), '__diag__');
+    }));
+  }
+  const apiFail = out.slice(0, -1).some(x => !x.ok) || (out.length && !out[out.length - 1].ok && !firstChannel);
+  const anyReject = out.some(x => REJECT.has(x.status));
+  const allOk = out.every(x => x.ok);
+  $('diag-result').innerHTML = allOk
+    ? `<div class="tg-status" style="color:var(--on)">${icon('check')}Todo responde bien. Si algo falló antes, era un bloqueo pasajero.</div>`
+    : anyReject
+      ? `<div class="hint" style="color:var(--text)">El servidor está rechazando las solicitudes. Lo más probable es un bloqueo temporal de tu IP o que la cuenta tenga todas sus conexiones ocupadas. Cierra otros reproductores con esta cuenta y vuelve a probar en 5 a 10 minutos.</div>`
+      : apiFail ? `<div class="hint" style="color:var(--text)">El servidor no responde bien. Revisa tu internet o prueba más tarde.</div>`
+        : `<div class="hint" style="color:var(--text)">La cuenta responde, pero el canal no abre. Puede que las conexiones estén en uso o que ese canal esté caído.</div>`;
 }
 
 /* ═══════════════════════════ CATÁLOGO ═══════════════════════════ */
@@ -617,13 +685,29 @@ function noAccountHtml() {
 function chipsHtml(type, current) {
   const cats = catsOf(type);
   const chip = (key, label, extra = '') => `<button class="chip${String(current) === String(key) ? ' on' : ''}" data-cat="${esc(key)}" onclick="selectCat('${type}',${jsArg(String(key))})">${extra}${esc(label)}</button>`;
-  return chip('fav', 'Favoritos', icon('star')) + chip('*', 'Todos') + cats.map(c => chip(c.category_id, c.category_name || 'Sin nombre')).join('');
+  return chip('*', 'Categorías', icon('folder')) + chip('fav', 'Favoritos', icon('star')) + cats.map(c => chip(c.category_id, c.category_name || 'Sin nombre')).join('');
 }
 function defaultCat(type) {
   const saved = S.cfg[`cat_${S.activeId}_${type}`];
   if (saved && (saved === 'fav' || saved === '*' || catsOf(type).some(c => String(c.category_id) === String(saved)))) return saved;
-  if (Object.keys(favMap(type)).length) return 'fav';
-  return catsOf(type)[0] ? String(catsOf(type)[0].category_id) : '*';
+  return '*';
+}
+function categoryCounts(type) {
+  const all = S.lists[`${type}:*`]; if (!all) return null;
+  const c = {}; for (const it of all) c[it.category_id] = (c[it.category_id] || 0) + 1; return c;
+}
+function categoryListHtml(type) {
+  const cats = catsOf(type), counts = categoryCounts(type), favN = Object.keys(favMap(type)).length;
+  if (!cats.length) return emptyState('folder', 'Sin categorías', 'Este servidor no tiene categorías de este tipo.');
+  const row = (key, name, sub, ic) => `<button class="row cat-row" data-name="${esc(String(name).toLowerCase())}" onclick="selectCat('${type}',${jsArg(String(key))})">
+      <span class="cat-ic">${icon(ic)}</span><span class="n"><b>${esc(name)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>${icon('chev', 'chev')}</button>`;
+  return `${cats.length > 10 ? `<div class="search">${icon('search')}<input type="text" placeholder="Buscar categoría" oninput="filterCatRows(this)" autocomplete="off"></div>` : ''}
+    <div class="cat-rows">${favN ? row('fav', 'Favoritos', `${favN} guardados`, 'star') : ''}
+    ${cats.map(c => row(c.category_id, c.category_name || 'Sin nombre', counts ? `${fmtNum(counts[c.category_id] || 0)} ${type === 'live' ? 'canales' : type === 'vod' ? 'películas' : 'series'}` : '', 'folder')).join('')}</div>`;
+}
+function filterCatRows(inp) {
+  const q = inp.value.trim().toLowerCase();
+  inp.closest('.scroll').querySelectorAll('.cat-row').forEach(r => { r.hidden = q && !r.dataset.name.includes(q); });
 }
 function selectCat(type, cat) {
   S.cfg[`cat_${S.activeId}_${type}`] = cat; saveCfg();
@@ -642,11 +726,14 @@ async function loadLive(cat) {
   S.view.live = cat;
   $('live-chips').innerHTML = chipsHtml('live', cat);
   const on = $('live-chips').querySelector('.chip.on'); if (on) on.scrollIntoView({ inline: 'center', block: 'nearest' });
-  const body = $('live-body'); body.innerHTML = loadingHtml('Cargando canales…'); $('live-bar').hidden = true;
+  const body = $('live-body'); $('live-bar').hidden = true;
   stopChecks();
+  S.liveAll = [];
+  if (cat === '*') { body.scrollTop = 0; body.innerHTML = categoryListHtml('live'); return; }
+  body.innerHTML = loadingHtml('Cargando canales…');
   let items;
   try { items = cat === 'fav' ? Object.values(favMap('live')) : await getList('live', cat); }
-  catch (e) { body.innerHTML = emptyState('live', 'No se pudieron cargar los canales', e.message, `<button class="btn" onclick="loadLive(${jsArg(cat)})">${icon('refresh')}Reintentar</button>`); return; }
+  catch (e) { if (S.view.live === cat) body.innerHTML = errorState('live', e, `loadLive(${jsArg(cat)})`); return; }
   if (S.view.live !== cat) return;
   if (!items.length) {
     body.innerHTML = cat === 'fav' ? emptyState('star', 'Aún no tienes favoritos', 'Toca la estrella de un canal para tenerlo siempre a mano aquí.') : emptyState('live', 'Esta categoría está vacía', 'Elige otra categoría arriba.');
@@ -696,8 +783,8 @@ function appendLive() {
   list.insertAdjacentHTML('beforeend', html.join(''));
   const added = items.slice(from, to);
   S.liveShown = to;
-  checkStreams(added);
-  observeEpg(list);
+  if (S.cfg.autoCheck) checkStreams(added);
+  if (S.cfg.showEpg !== false) observeEpg(list);
 }
 function updateLiveBar() {
   const all = S.liveAll || [];
@@ -705,8 +792,12 @@ function updateLiveBar() {
   let on = 0, off = 0;
   for (const it of all) { const s = S.status[it.stream_id]; if (s === true) on++; else if (s === false) off++; }
   $('live-bar').hidden = false;
-  const pending = all.length - on - off;
-  $('live-count').textContent = on + off ? `${on} en línea${off ? ` · ${off} caídos` : ''}${pending > 0 ? ` · ${pending} por revisar` : ''}` : `${fmtNum(all.length)} canales`;
+  const pending = all.length - on - off, running = chk.queue.length + chk.inflight > 0;
+  const bc = $('btn-check');
+  bc.hidden = !running && pending === 0;
+  bc.innerHTML = running ? `<span class="spinner"></span>Detener` : `${icon('check')}${on + off ? 'Seguir verificando' : 'Verificar canales'}`;
+  $('btn-online').hidden = on + off === 0;
+  $('live-count').textContent = on + off ? `${on} en línea${off ? ` · ${off} caídos` : ''}${running ? ` · revisando` : ''}` : `${fmtNum(all.length)} canales`;
   $('live-bar-on').style.width = `${on / all.length * 100}%`;
   $('live-bar-off').style.width = `${off / all.length * 100}%`;
   $('sw-online').classList.toggle('on', S.onlineOnly);
@@ -718,36 +809,52 @@ function toggleOnlineOnly() {
 }
 
 /* ─── Verificación de canales (Kotlin: NativeChecker) ─── */
-let checkGen = 0;
+// Cada verificación abre una conexión real al canal: se hacen de a 2, con pausa,
+// para no parecer un ataque ante el servidor (algunos bloquean la IP).
+const CHECK_PARALLEL = 2, CHECK_GAP_MS = 300;
+const chk = { queue: [], inflight: 0, offStreak: 0, inflightIds: new Set() };
 function stopChecks() {
-  checkGen++;
+  chk.queue = []; chk.inflight = 0; chk.offStreak = 0; chk.inflightIds.clear();
   try { if (window.NativeChecker && NativeChecker.cancelAll) NativeChecker.cancelAll(); } catch { }
+  if (typeof updateLiveBar === 'function' && $('live-bar')) refreshLiveBarSoon();
+}
+function checkCurrent() {
+  if (chk.queue.length + chk.inflight > 0) { stopChecks(); updateLiveBar(); return; }
+  clearRejected();
+  checkStreams(S.liveAll || []);
 }
 function checkStreams(items) {
-  if (!S.session) return;
-  const pending = items.filter(it => S.status[it.stream_id] === undefined);
-  if (!pending.length) return;
-  if (window.NativeChecker && NativeChecker.checkStream) {
-    pending.forEach(it => NativeChecker.checkStream(streamUrl('live', it), String(it.stream_id)));
-    return;
+  if (!S.session || isRejecting()) return;
+  const queued = new Set(chk.queue.map(i => i.stream_id));
+  for (const it of items) if (S.status[it.stream_id] === undefined && !queued.has(it.stream_id) && !chk.inflightIds.has(String(it.stream_id))) chk.queue.push(it);
+  pumpChecks(); updateLiveBar();
+}
+function pumpChecks() {
+  while (chk.inflight < CHECK_PARALLEL && chk.queue.length) {
+    const it = chk.queue.shift();
+    if (S.status[it.stream_id] !== undefined) continue;
+    chk.inflight++; chk.inflightIds.add(String(it.stream_id));
+    sendCheck(it);
   }
+}
+function sendCheck(it) {
+  const id = String(it.stream_id), url = streamUrl('live', it);
+  if (window.NativeChecker && NativeChecker.checkStream) { NativeChecker.checkStream(url, id); return; }
   // Fuera de la app (navegador): aproximación, sin código de estado real.
-  const gen = checkGen;
-  (async () => {
-    for (let i = 0; i < pending.length; i += 6) {
-      if (gen !== checkGen) return;
-      await Promise.all(pending.slice(i, i + 6).map(async it => {
-        try {
-          const c = new AbortController(); const t = setTimeout(() => c.abort(), 5000);
-          await fetch(streamUrl('live', it), { method: 'HEAD', mode: 'no-cors', signal: c.signal }); clearTimeout(t);
-          window.onStreamChecked(String(it.stream_id), true);
-        } catch { window.onStreamChecked(String(it.stream_id), false); }
-      }));
-    }
-  })();
+  const c = new AbortController(); const t = setTimeout(() => c.abort(), 6000);
+  fetch(url, { method: 'HEAD', mode: 'no-cors', signal: c.signal }).then(() => window.onStreamChecked(id, true)).catch(() => window.onStreamChecked(id, false)).finally(() => clearTimeout(t));
 }
 const refreshLiveBarSoon = debounce(updateLiveBar, 250);
 window.onStreamChecked = function (id, online) {
+  if (id === '__diag__') { if (diagResolve) diagResolve(online); return; }
+  if (chk.inflightIds.delete(String(id))) {
+    chk.inflight = Math.max(0, chk.inflight - 1);
+    chk.offStreak = online ? 0 : chk.offStreak + 1;
+    if (chk.offStreak >= 12) {
+      stopChecks();
+      toast('12 canales seguidos sin respuesta: pausé la verificación para no saturar el servidor', 'err');
+    } else setTimeout(pumpChecks, CHECK_GAP_MS);
+  }
   S.status[id] = online;
   document.querySelectorAll(`.tally[data-sid="${CSS.escape(String(id))}"]`).forEach(t => {
     t.className = `tally ${online ? 'on' : 'off'}`; t.title = online ? 'En línea' : 'Caído';
@@ -772,10 +879,10 @@ function observeEpg(list) {
   list.querySelectorAll('small.epg:not([data-obs])').forEach(el => { el.dataset.obs = '1'; epgObserver.observe(el); });
 }
 function pumpEpg() {
-  while (epgActive < 3 && epgQueue.length) {
+  while (epgActive < 1 && epgQueue.length && !S.epgOff && !isRejecting()) {
     const sid = epgQueue.shift(); if (S.epg[sid]) continue;
     epgActive++;
-    fetchEpg(sid).finally(() => { epgActive--; pumpEpg(); });
+    fetchEpg(sid).finally(() => { epgActive--; setTimeout(pumpEpg, 700); });
   }
 }
 async function fetchEpg(sid) {
@@ -783,7 +890,7 @@ async function fetchEpg(sid) {
   const accId = S.session.id;
   let entry = { text: 'Sin guía disponible', pct: null };
   try {
-    const d = await apiGet(`${S.session.apiUrl}&action=get_short_epg&stream_id=${encodeURIComponent(sid)}&limit=2`, 10000);
+    const d = await apiGet(`${S.session.apiUrl}&action=get_short_epg&stream_id=${encodeURIComponent(sid)}&limit=2`, 10000, { noBrake: true });
     const now = Date.now() / 1000;
     const list = (d.epg_listings || []).map(x => ({ t: decodeB64(x.title).trim(), s: +x.start_timestamp || 0, e: +x.stop_timestamp || 0 })).filter(x => x.t);
     const cur = list.find(x => x.e > now) || list[0];
@@ -791,7 +898,9 @@ async function fetchEpg(sid) {
       const pct = cur.e > cur.s ? Math.max(0, Math.min(100, (now - cur.s) / (cur.e - cur.s) * 100)) : null;
       entry = { text: `Ahora: ${cur.t}${cur.s ? ` · ${fmtTime(cur.s)}` : ''}`, pct: pct === null ? null : Math.round(pct), title: cur.t, s: cur.s, e: cur.e };
     }
-  } catch { }
+  } catch (e) {
+    if (e && REJECT.has(e.status)) { S.epgOff = true; return; }   // el servidor no da guía: no insistir
+  }
   if (!S.session || S.session.id !== accId) return;
   S.epg[sid] = entry;
   document.querySelectorAll(`small.epg[data-sid="${CSS.escape(String(sid))}"]`).forEach(el => {
@@ -867,9 +976,10 @@ async function loadGrid(type, cat) {
     <div class="chips" style="margin:0 -16px;padding-bottom:12px">${chipsHtml(type, cat)}</div>
     <div id="${type}-grid-wrap">${loadingHtml(type === 'vod' ? 'Cargando películas…' : 'Cargando series…')}</div>`;
   const on = body.querySelector('.chips .chip.on'); if (on) on.scrollIntoView({ inline: 'center', block: 'nearest' });
+  if (cat === '*') { $(`${type}-grid-wrap`).innerHTML = categoryListHtml(type); return; }
   let items;
   try { items = cat === 'fav' ? Object.values(favMap(type)) : await getList(type, cat); }
-  catch (e) { $(`${type}-grid-wrap`).innerHTML = emptyState(type === 'vod' ? 'mov' : 'ser', 'No se pudo cargar el catálogo', e.message, `<button class="btn" onclick="loadGrid('${type}',${jsArg(cat)})">${icon('refresh')}Reintentar</button>`); return; }
+  catch (e) { if (S.view[type] === cat) $(`${type}-grid-wrap`).innerHTML = errorState(type === 'vod' ? 'mov' : 'ser', e, `loadGrid('${type}',${jsArg(cat)})`); return; }
   if (S.view[type] !== cat) return;
   const wrap = $(`${type}-grid-wrap`);
   if (!items.length) {
@@ -1071,7 +1181,7 @@ async function runSearch(force) {
   const results = {};
   for (const t of types) {
     try { const all = await getList(t, '*'); results[t] = all.filter(i => norm(itemName(i)).includes(nq)); }
-    catch (e) { results[t] = { error: e.message }; }
+    catch (e) { results[t] = { error: e.message, rejected: REJECT.has(e.status) }; }
     if (gen !== searchGen) return;
   }
   S.searchResults = results;
@@ -1080,7 +1190,7 @@ async function runSearch(force) {
   let html = '';
   for (const t of types) {
     const r = results[t];
-    if (r.error) { html += `<h2 class="sec">${TYPES[t].label}</h2><div class="hint">No se pudo buscar: ${esc(r.error)}</div>`; continue; }
+    if (r.error) { html += `<h2 class="sec">${TYPES[t].label}</h2><div class="hint">No se pudo buscar: ${esc(r.error)}.${r.rejected ? ' El servidor está rechazando las conexiones; espera unos minutos o usa Probar conexión en la cuenta.' : ''}</div>`; continue; }
     if (!r.length) continue;
     const limit = searchType === 'all' ? (t === 'live' ? 8 : 9) : 120;
     html += `<h2 class="sec">${TYPES[t].label} <span class="hint">${fmtNum(r.length)}</span>${searchType === 'all' && r.length > limit ? `<button onclick="searchType='${t}';renderSearchFilters();runSearch(true)">Ver todos</button>` : ''}</h2>`;
@@ -1224,7 +1334,9 @@ function openSettings() {
     <div class="set-group">
       <div class="set-row"><span class="n"><b>Pantalla de inicio</b><small>La que se abre al entrar a la app</small></span>
         <select onchange="S.cfg.startTab=this.value;saveCfg();toast('Guardado','ok')">${opt('accounts', 'Cuentas')}${opt('live', 'En vivo')}${opt('vod', 'Películas')}${opt('series', 'Series')}${opt('mylist', 'Mi lista')}${opt('last', 'La última que usé')}</select></div>
-      <button class="set-row" onclick="toggleOnlineOnly();openSettings()"><span class="n"><b>Ocultar canales caídos</b><small>En la pestaña En vivo</small></span><span class="switch${S.onlineOnly ? ' on' : ''}"></span></button>
+      <button class="set-row" onclick="S.cfg.autoCheck=!S.cfg.autoCheck;saveCfg();openSettings()"><span class="n"><b>Verificar canales automáticamente</b><small>Al abrir una categoría. Algunos servidores bloquean la IP si se verifican muchos canales; si pasa, déjalo apagado y usa el botón Verificar canales.</small></span><span class="switch${S.cfg.autoCheck ? ' on' : ''}"></span></button>
+      <button class="set-row" onclick="S.cfg.showEpg=S.cfg.showEpg===false;saveCfg();openSettings()"><span class="n"><b>Mostrar la guía en la lista</b><small>Lo que están pasando en cada canal</small></span><span class="switch${S.cfg.showEpg !== false ? ' on' : ''}"></span></button>
+      <button class="set-row" onclick="toggleOnlineOnly();openSettings()"><span class="n"><b>Ocultar canales caídos</b><small>En la pestaña En vivo, tras verificarlos</small></span><span class="switch${S.onlineOnly ? ' on' : ''}"></span></button>
     </div>
     <div class="set-title">Tema</div>
     <div class="set-group"><div class="skins">${SKINS.map(s => `<button class="skin${(S.cfg.skin || 'default') === s.id ? ' on' : ''}" style="--c:${s.c}" onclick="setSkin('${s.id}');openSettings()" aria-label="${s.name}" title="${s.name}"></button>`).join('')}</div></div>
