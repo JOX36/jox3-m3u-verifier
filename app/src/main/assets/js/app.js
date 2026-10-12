@@ -1060,7 +1060,7 @@ function detailShell(type, it, info) {
     <div class="head">
       <div class="poster">${poster ? `<img src="${esc(poster)}" alt="" onerror="this.remove()">` : ''}</div>
       <div class="ttl"><h2>${esc(name)}</h2>
-        ${srcAcc && S.accounts.length > 1 ? `<div class="hint" style="margin-top:4px">${icon('tv', 'tiny')} ${esc(accLabel(srcAcc))}</div>` : ''}
+        ${srcAcc && S.accounts.length > 1 ? `<div class="hint" style="margin-top:4px">${icon('tv', 'tiny')} ${esc(serverName(srcAcc))} · ${esc(srcAcc.username)}</div>` : ''}
         <div class="pills">${r ? `<span class="s">★ ${r}</span>` : ''}${year ? `<span>${esc(year)}</span>` : ''}${dur ? `<span>${esc(dur)}</span>` : ''}${q ? `<span>${q}</span>` : ''}${type === 'series' && seasons.length ? `<span>${seasons.length} ${seasons.length === 1 ? 'temporada' : 'temporadas'}</span>` : ''}</div>
       </div>
     </div>
@@ -1198,17 +1198,13 @@ function renderSearchFilters() {
   const n = usableAccounts().length;
   $('search-filters').innerHTML = f.map(([k, l]) => `<button class="chip${searchType === k ? ' on' : ''}" onclick="searchType='${k}';renderSearchFilters();runSearch(true)">${l}</button>`).join('');
   $('search-scope').innerHTML = n > 1
-    ? `<button class="${S.searchScope === 'all' ? 'on' : ''}" onclick="S.searchScope='all';renderSearchFilters();runSearch(true)">Todas las cuentas (${n})</button><button class="${S.searchScope === 'active' ? 'on' : ''}" onclick="S.searchScope='active';renderSearchFilters();runSearch(true)">Solo ${esc(activeAccount()?.username || 'esta cuenta')}</button>`
+    ? `<button class="${S.searchScope === 'all' ? 'on' : ''}" onclick="S.searchScope='all';renderSearchFilters();runSearch(true)">Todos los servidores (${n})</button><button class="${S.searchScope === 'active' ? 'on' : ''}" onclick="S.searchScope='active';renderSearchFilters();runSearch(true)">Solo ${esc(activeAccount()?.username || 'esta cuenta')}</button>`
     : '';
   $('search-scope').hidden = n < 2;
 }
 const onSearchInput = debounce(() => runSearch(false), 400);
 function clearSearch() { $('search-input').value = ''; $('search-clear').hidden = true; $('search-body').innerHTML = ''; $('search-input').focus(); }
 const normTxt = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-// Clave para agrupar el mismo título en varios servidores: sin tildes, calidad, año entre paréntesis ni símbolos.
-function groupKey(type, name) {
-  return type + ':' + normTxt(cleanTitle(name)).replace(/\b(4k|uhd|fhd|hd|sd|hevc|h265|latino|lat|dual|sub|esp)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
-}
 let searchGen = 0;
 async function runSearch(force) {
   const q = $('search-input').value.trim(); $('search-clear').hidden = !q;
@@ -1218,77 +1214,77 @@ async function runSearch(force) {
   const types = searchType === 'all' ? ['live', 'vod', 'series'] : [searchType];
   const accs = S.searchScope === 'all' ? usableAccounts() : [activeAccount()].filter(Boolean);
   if (!accs.length) { body.innerHTML = emptyState('acc', 'No hay cuentas activas', 'Verifica una cuenta para poder buscar.'); return; }
-  const nq = normTxt(q), groups = {}, errors = [];
+  const nq = normTxt(q), errors = [], perAcc = [];
   let step = 0; const steps = accs.length * types.length;
   // Una cuenta y un tipo a la vez, para no saturar a ningún servidor.
   for (const acc of accs) {
+    const found = { acc, live: [], series: [], vod: [] };
     for (const t of types) {
       step++;
-      const memKey = acc.id === S.activeId ? S.lists[`${t}:*`] : S.accLists[`${acc.id}:${t}`];
-      if (!memKey) body.innerHTML = loadingHtml(`Descargando ${TYPES[t].label.toLowerCase()} de ${acc.username} (${step} de ${steps})…`);
+      const inMem = acc.id === S.activeId ? S.lists[`${t}:*`] : S.accLists[`${acc.id}:${t}`];
+      if (!inMem) body.innerHTML = loadingHtml(`Descargando ${TYPES[t].label.toLowerCase()} de ${serverName(acc)} (${step} de ${steps})…`);
       try {
         const all = await getListFor(acc, t);
-        for (const it of all) {
-          const name = itemName(it);
-          if (!normTxt(name).includes(nq)) continue;
-          const k = groupKey(t, name);
-          (groups[k] = groups[k] || { type: t, name: cleanTitle(name), hits: [] }).hits.push({ accId: acc.id, item: it });
-        }
+        found[t] = all.filter(it => normTxt(itemName(it)).includes(nq)).sort((x, y) => itemName(x).localeCompare(itemName(y)));
       } catch (e) { errors.push({ acc, t, e }); }
       if (gen !== searchGen) return;
     }
+    perAcc.push(found);
   }
-  const byType = { live: [], vod: [], series: [] };
-  Object.values(groups).forEach(g => byType[g.type].push(g));
-  // Primero lo que está en más servidores, luego por nombre.
-  for (const t of types) byType[t].sort((a, b) => new Set(b.hits.map(h => h.accId)).size - new Set(a.hits.map(h => h.accId)).size || a.name.localeCompare(b.name));
-  S.searchGroups = byType;
-  const total = types.reduce((n, t) => n + byType[t].length, 0);
+  S.searchByAcc = perAcc;
+  const order = ['live', 'series', 'vod'].filter(t => types.includes(t));
+  const total = perAcc.reduce((n, f) => n + order.reduce((m, t) => m + f[t].length, 0), 0);
+  if (!total && !errors.length) { body.innerHTML = emptyState('search', `Nada para “${q}”`, accs.length > 1 ? `Se buscó en ${accs.length} servidores. Prueba con otra palabra.` : 'Prueba con otra palabra o revisa la ortografía.'); return; }
+  const MAXR = 200;
   let html = '';
-  if (errors.length) html += `<div class="hint" style="margin:4px 0 6px;color:var(--warn)">${errors.map(x => `No se pudo buscar ${TYPES[x.t].label.toLowerCase()} en ${esc(x.acc.username)}: ${esc(x.e.message)}`).join('<br>')}</div>`;
-  if (!total) { body.innerHTML = html + emptyState('search', `Nada para “${q}”`, accs.length > 1 ? `Se buscó en ${accs.length} cuentas. Prueba con otra palabra.` : 'Prueba con otra palabra o revisa la ortografía.'); return; }
-  for (const t of types) {
-    const r = byType[t]; if (!r.length) continue;
-    const limit = searchType === 'all' ? (t === 'live' ? 8 : 9) : 150;
-    html += `<h2 class="sec">${TYPES[t].label} <span class="hint">${fmtNum(r.length)}</span>${searchType === 'all' && r.length > limit ? `<button onclick="searchType='${t}';renderSearchFilters();runSearch(true)">Ver todos</button>` : ''}</h2>`;
-    if (t === 'live') {
-      html += r.slice(0, limit).map((g, i) => {
-        const it = g.hits[0].item;
-        return `<button class="ch" onclick="openHit('live',${i})">${logoHtml(itemName(it), it.stream_icon)}<span class="n"><b>${esc(itemName(it))}</b><small>${esc(serversLine(g))}</small></span>${g.hits.length > 1 ? `<span class="srv-n">${g.hits.length}</span>` : icon('play')}</button>`;
-      }).join('');
-    } else {
-      html += `<div class="grid">${r.slice(0, limit).map((g, i) => {
-        const it = g.hits.find(h => itemImg(t, h.item))?.item || g.hits[0].item;
-        return `<div class="hit">${posterHtml(t, it, `openHit('${t}',${i})`)}<small>${esc(serversLine(g, true))}</small></div>`;
-      }).join('')}</div>`;
+  perAcc.forEach((f, ai) => {
+    const a = f.acc, n = order.reduce((m, t) => m + f[t].length, 0);
+    const errs = errors.filter(x => x.acc.id === a.id);
+    if (!n && !errs.length && accs.length > 1) return;
+    html += `<details class="srv" open><summary>
+        <span class="dot ${accLevel(a)}"></span>
+        <span class="n"><b>${esc(serverName(a))}</b><small>${esc(a.username)} · ${esc(accDaysLabel(a))}${a.id === S.activeId ? ' · activa' : ''}</small></span>
+        <span class="srv-n">${fmtNum(n)}</span>${icon('down', 'chev')}</summary>`;
+    errs.forEach(x => { html += `<div class="hint" style="color:var(--warn);margin:4px 0">No se pudo buscar ${TYPES[x.t].label.toLowerCase()}: ${esc(x.e.message)}</div>`; });
+    for (const t of order) {
+      const r = f[t].slice(0, MAXR); if (!r.length) continue;
+      const lim = searchType === 'all' ? 6 : 60;
+      html += `<h3 class="srv-type">${{ live: 'TV en vivo', series: 'Series', vod: 'Películas' }[t]} <span class="hint">${fmtNum(f[t].length)}</span></h3>`;
+      const cell = (it, i) => t === 'live'
+        ? `<button class="ch${i >= lim ? ' more' : ''}" onclick="openSearchItem(${ai},'live',${i})">${logoHtml(itemName(it), it.stream_icon)}<span class="n"><b>${esc(itemName(it))}</b></span>${icon('play')}</button>`
+        : posterHtml(t, it, `openSearchItem(${ai},'${t}',${i})`).replace('<button class="po', `<button class="po${i >= lim ? ' more' : ''}`);
+      html += `<div class="${t === 'live' ? 'res-list' : 'grid'}">${r.map(cell).join('')}</div>`;
+      if (r.length > lim) html += `<button class="btn sm more-btn" onclick="showMoreResults(this)">Ver ${fmtNum(r.length - lim)} más</button>`;
+      if (f[t].length > MAXR) html += `<div class="hint" style="margin-top:6px">Se muestran los primeros ${MAXR}. Escribe una palabra más precisa para ver el resto.</div>`;
     }
-  }
+    html += `</details>`;
+  });
   body.innerHTML = html;
 }
-function serversLine(g, short) {
-  const ids = [...new Set(g.hits.map(h => h.accId))];
-  const names = ids.map(id => accountById(id)?.username || '?');
-  if (short) return ids.length > 1 ? `En ${ids.length} servidores` : names[0];
-  return ids.length > 1 ? `En ${ids.length} servidores: ${names.join(', ')}` : `En ${names[0]} · ${hostLabel(accountById(ids[0])?.host || '')}`;
+// Nombre corto del servidor: "prolive.xyz:8080" → "prolive".
+function serverName(a) {
+  try {
+    const h = new URL(a.host).hostname;
+    if (/^[\d.]+$/.test(h)) return h;
+    const parts = h.split('.').filter(p => !/^(www|tv|iptv|line|cdn|srv|panel)$/i.test(p));
+    return parts.length > 1 ? parts[parts.length - 2] : parts[0] || h;
+  } catch { return hostLabel(a.host || ''); }
 }
-function openHit(type, i) {
-  const g = (S.searchGroups[type] || [])[i]; if (!g) return;
-  if (g.hits.length === 1) return playHit(type, g.hits[0]);
-  S.hitChoice = g;
-  showSheet(g.name, `<div class="hint" style="margin:-4px 0 6px">Disponible en ${g.hits.length} ${g.hits.length === 1 ? 'lugar' : 'lugares'}. Elige de qué servidor verlo.</div>` +
-    g.hits.map((h, k) => {
-      const a = accountById(h.accId) || {}, q = quality(itemName(h.item));
-      return `<button class="row" onclick="closeTop();playHit('${type}',S.hitChoice.hits[${k}])">
-        <span class="dot ${accLevel(a)}"></span>
-        <span class="n"><b>${esc(a.username || '?')}${h.accId === S.activeId ? ' (activa)' : ''}</b><small>${esc(hostLabel(a.host || ''))} · ${esc(itemName(h.item))}</small></span>
-        <span class="end">${q ? `<span class="badge muted">${q}</span> ` : ''}<span style="color:var(--${accLevel(a) === 'muted' ? 'muted' : accLevel(a)})">${esc(accDaysLabel(a, true))}</span></span></button>`;
-    }).join(''));
+function showMoreResults(btn) {
+  const box = btn.previousElementSibling;
+  if (box) box.querySelectorAll('.more').forEach(x => x.classList.remove('more'));
+  btn.remove();
+}
+function openSearchItem(ai, type, i) {
+  const f = (S.searchByAcc || [])[ai]; if (!f) return;
+  const it = f[type][i]; if (!it) return;
+  playHit(type, { accId: f.acc.id, item: it });
 }
 function playHit(type, h) {
   const sess = sessionFor(h.accId);
   if (type === 'live') {
     const it = h.item;
-    nativePlay([{ name: itemName(it), url: streamUrl('live', it, sess), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '' }], 0, `Búsqueda · ${accountById(h.accId)?.username || ''}`, sess.apiUrl);
+    nativePlay([{ name: itemName(it), url: streamUrl('live', it, sess), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '' }], 0, `Búsqueda · ${serverName(accountById(h.accId) || {})}`, sess.apiUrl);
     return;
   }
   openDetail(type, h.item, h.accId);

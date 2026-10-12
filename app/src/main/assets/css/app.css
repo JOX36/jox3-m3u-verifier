@@ -319,3 +319,19 @@ textarea.input{height:auto;min-height:84px;padding:12px 14px;resize:none;line-he
 .hit small{display:block;font-size:11.5px;color:var(--muted);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .srv-n{min-width:26px;height:26px;border-radius:13px;background:rgba(var(--ar),.15);color:var(--accent);font-size:12.5px;font-weight:750;display:grid;place-items:center;padding:0 7px;flex-shrink:0}
 svg.i.tiny{width:14px;height:14px;vertical-align:-2px}
+
+/* ═══ Resultados por servidor ═══ */
+.srv{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:0 14px;margin-bottom:12px}
+.srv summary{list-style:none;display:flex;align-items:center;gap:12px;padding:13px 0;cursor:pointer}
+.srv summary::-webkit-details-marker{display:none}
+.srv summary .n{flex:1;min-width:0}
+.srv summary .n b{display:block;font-size:16px;font-weight:750;text-transform:capitalize}
+.srv summary .n small{font-size:12.5px;color:var(--muted)}
+.srv summary svg.chev{width:20px;height:20px;color:var(--muted);transition:transform .2s}
+.srv:not([open]) summary svg.chev{transform:rotate(-90deg)}
+.srv[open]{padding-bottom:12px}
+.srv-type{font-size:13.5px;font-weight:700;margin:12px 0 8px;display:flex;gap:8px;align-items:baseline}
+.res-list .ch:last-child{border-bottom:none}
+.srv .more{display:none!important}
+.more-btn{margin-top:10px;width:100%}
+.srv summary .dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
