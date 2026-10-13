@@ -1,3 +1,10 @@
+/* Fuente Inter incluida en la app (licencia en fonts/LICENSE-Inter.txt): sin depender de internet. */
+@font-face{font-family:Inter;font-style:normal;font-weight:400;font-display:swap;src:url(../fonts/inter-Regular.woff) format('woff')}
+@font-face{font-family:Inter;font-style:normal;font-weight:500;font-display:swap;src:url(../fonts/inter-Medium.woff) format('woff')}
+@font-face{font-family:Inter;font-style:normal;font-weight:600;font-display:swap;src:url(../fonts/inter-SemiBold.woff) format('woff')}
+@font-face{font-family:Inter;font-style:normal;font-weight:700;font-display:swap;src:url(../fonts/inter-Bold.woff) format('woff')}
+@font-face{font-family:Inter;font-style:normal;font-weight:800 900;font-display:swap;src:url(../fonts/inter-ExtraBold.woff) format('woff')}
+
 /* ════════════════════════════════════════════════════════════════
    JOX3 — interfaz estilo sala de control de TV
    Tokens de color por tema (6 temas). Todo el resto usa variables.
