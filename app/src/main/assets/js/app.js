@@ -721,7 +721,7 @@ async function addManyFromSheet(links) {
 function openAccountPage(id) {
   const a = accountById(id); if (!a) return;
   const l = linksOf(a), g = a.geo || {}, exp = tsDate(a.expDate), created = tsDate(a.createdAt);
-  const cats = id === S.activeId && S.session ? S.session.categories : null;
+  const cats = id === S.activeId && S.session ? { live: catsOf('live'), vod: catsOf('vod'), series: catsOf('series') } : null;
   $('account-page-title').textContent = a.username;
   const linkRow = (label, url, kind) => url ? `<div class="link-row"><div><small>${label}</small><code>${esc(url)}</code></div><button onclick='copyText(${JSON.stringify(url).replace(/'/g, "&#39;")}, ${JSON.stringify(label + " copiado")})' aria-label="Copiar">${icon('copy')}</button></div>` : '';
   const catBlock = (type, title) => {
@@ -756,6 +756,129 @@ function openAccountPage(id) {
     </div>
     ${catBlock('live', 'Categorías de TV')}${catBlock('vod', 'Categorías de películas')}${catBlock('series', 'Categorías de series')}`;
   showPage('page-account');
+}
+
+/* ═══════════════════════════ CONTROL PARENTAL ═══════════════════════════ */
+// Con PIN. Oculta categorías de adultos (detectadas por nombre) y las que el usuario elija,
+// en listas, búsqueda, favoritos y "Continuar viendo". Se desbloquea por 1 hora.
+const ADULT_RX = /(^|[^a-z0-9])(adult[oa]?s?|xxx+|\+ ?18|18 ?\+|porn[a-z]*|er[oó]tic[oa]?s?|playboy|brazzers|hustler|penthouse|dorcel|vivid|private|venus|sexy?|hot ?club|red ?light)([^a-z0-9]|$)/i;
+S.accCats = {};
+function pc() { return S.cfg.parental || (S.cfg.parental = {}); }
+function parentalOn() { return !!(S.cfg.parental && S.cfg.parental.on); }
+function parentalLocked() {
+  if (!parentalOn()) return false;
+  if (S.parentalUntil && Date.now() < S.parentalUntil) return false;
+  return true;
+}
+function catSet(kind, accId, type) { const p = pc(); p[kind] = p[kind] || {}; p[kind][accId] = p[kind][accId] || {}; return (p[kind][accId][type] = p[kind][accId][type] || []); }
+function catBlocked(type, cat, accId = S.activeId) {
+  if (!cat) return false;
+  const id = String(cat.category_id);
+  if (catSet('blocked', accId, type).includes(id)) return true;
+  if (catSet('allowed', accId, type).includes(id)) return false;
+  return pc().auto !== false && ADULT_RX.test(cat.category_name || '');
+}
+async function loadAccCats(accId) {
+  if (accId === S.activeId || S.accCats[accId]) return;
+  const c = await idb.get(`cats:${accId}`); S.accCats[accId] = (c && c.cats) || { live: [], vod: [], series: [] };
+}
+function filterAllowed(type, items, accId = S.activeId) {
+  if (!parentalLocked()) return items;
+  const cats = accId === S.activeId ? allCatsOf(type) : ((S.accCats[accId] || {})[type] || []);
+  const blocked = new Set(cats.filter(c => catBlocked(type, c, accId)).map(c => String(c.category_id)));
+  return items.filter(it => !blocked.has(String(it.category_id)) && !(pc().auto !== false && ADULT_RX.test(itemName(it))));
+}
+// PIN guardado como huella (no en texto): suficiente para un bloqueo familiar.
+function pinHash(pin, salt) {
+  let h = 2166136261 >>> 0;
+  for (const ch of `${salt}:${pin}:jox3`) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  for (let i = 0; i < 5000; i++) { h ^= h >>> 13; h = Math.imul(h, 2246822507) >>> 0; h ^= i; }
+  return h.toString(16);
+}
+// Teclado numérico (sirve con el dedo, con el control del TV y con teclado físico).
+function pinPad(title, hint, onDone) {
+  S.pinBuf = ''; S.pinDone = onDone;
+  showSheet(title, `<div class="hint" style="margin:-4px 0 12px" id="pin-hint">${esc(hint)}</div>
+    <div class="pin-dots" id="pin-dots">${'<i></i>'.repeat(4)}</div>
+    <div class="pin-pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button onclick="pinKey('${n}')">${n}</button>`).join('')}
+      <button onclick="pinKey('del')" aria-label="Borrar">${icon('back')}</button><button onclick="pinKey('0')">0</button><button onclick="pinKey('ok')" aria-label="Aceptar">${icon('check')}</button></div>`);
+}
+function pinKey(k) {
+  if (k === 'del') S.pinBuf = S.pinBuf.slice(0, -1);
+  else if (k === 'ok') { if (S.pinBuf.length === 4) S.pinDone(S.pinBuf); return; }
+  else if (S.pinBuf.length < 4) S.pinBuf += k;
+  const dots = $('pin-dots'); if (dots) [...dots.children].forEach((d, i) => d.classList.toggle('on', i < S.pinBuf.length));
+  if (S.pinBuf.length === 4) setTimeout(() => S.pinDone && S.pinBuf.length === 4 && S.pinDone(S.pinBuf), 150);
+}
+document.addEventListener('keydown', e => {
+  if (!$('pin-dots') || !$('sheet').classList.contains('show')) return;
+  if (/^[0-9]$/.test(e.key)) { pinKey(e.key); e.preventDefault(); }
+  else if (e.key === 'Backspace') { pinKey('del'); e.preventDefault(); }
+});
+function pinError(msg) {
+  S.pinBuf = ''; const d = $('pin-dots'); if (!d) return;
+  [...d.children].forEach(x => x.classList.remove('on'));
+  d.classList.remove('shake'); void d.offsetWidth; d.classList.add('shake');
+  $('pin-hint').textContent = msg; $('pin-hint').style.color = 'var(--off)';
+}
+function askPin(title, onOk) {
+  pinPad(title, 'Ingresa el PIN de 4 dígitos', pin => {
+    if (pinHash(pin, pc().salt) === pc().pin) { closeTop(); onOk(); }
+    else pinError('PIN incorrecto. Intenta de nuevo.');
+  });
+}
+function askUnlock(after) {
+  askPin('Desbloquear contenido', () => {
+    S.parentalUntil = Date.now() + 3600e3;
+    toast('Desbloqueado por 1 hora', 'ok');
+    resetCatalogViews();
+    if (after) after();
+  });
+}
+function lockNow() { S.parentalUntil = 0; toast('Control parental bloqueado'); resetCatalogViews(); }
+function resetCatalogViews() { S.view = { live: null, vod: null, series: null }; renderAll(); if ($('page-settings').classList.contains('show')) openSettings(); }
+// Cambiar ajustes del control parental exige el PIN si está bloqueado.
+function withParental(fn) { if (parentalLocked()) askUnlock(fn); else fn(); }
+function setupParental() {
+  pinPad('Crear PIN', 'Elige un PIN de 4 dígitos. Lo pedirá la app para ver el contenido oculto.', first => {
+    pinPad('Confirmar PIN', 'Ingresa el mismo PIN otra vez', second => {
+      if (second !== first) { pinError('No coincide. Vuelve a empezar.'); setTimeout(setupParental, 900); return; }
+      const p = pc(); p.salt = Math.random().toString(36).slice(2, 10); p.pin = pinHash(first, p.salt); p.on = true; if (p.auto === undefined) p.auto = true;
+      saveCfg(); S.parentalUntil = 0; closeTop();
+      toast('Control parental activado', 'ok'); resetCatalogViews();
+    });
+  });
+}
+function disableParental() {
+  withParental(() => { if (!confirm('¿Desactivar el control parental?')) return; const p = pc(); p.on = false; saveCfg(); toast('Control parental desactivado'); resetCatalogViews(); });
+}
+function changePin() { withParental(() => setupParental()); }
+function toggleAutoAdult() { withParental(() => { pc().auto = pc().auto === false; saveCfg(); resetCatalogViews(); }); }
+function openBlockedCats() {
+  withParental(() => {
+    if (!S.session) { toast('Primero elige una cuenta', 'err'); return; }
+    S.pcType = S.pcType || 'live';
+    renderBlockedCats();
+  });
+}
+function renderBlockedCats() {
+  const t = S.pcType, cats = allCatsOf(t);
+  showSheet('Categorías bloqueadas', `
+    <div class="hint" style="margin:-4px 0 10px">Cuenta ${esc(activeAccount()?.username || '')}. Las marcadas se ocultan cuando el control está bloqueado. Las de adultos vienen marcadas solas.</div>
+    <div class="seg">${['live', 'vod', 'series'].map(k => `<button class="${k === t ? 'on' : ''}" onclick="S.pcType='${k}';renderBlockedCats()">${TYPES[k].label}</button>`).join('')}</div>
+    ${cats.length ? cats.map(c => { const b = catBlocked(t, c); return `<button class="set-row" onclick="toggleCatBlock('${t}',${jsArg(String(c.category_id))})"><span class="n"><b>${esc(c.category_name || 'Sin nombre')}</b>${ADULT_RX.test(c.category_name || '') ? '<small>Detectada como contenido para adultos</small>' : ''}</span><span class="switch${b ? ' on' : ''}"></span></button>`; }).join('') : '<div class="hint">Sin categorías.</div>'}`);
+}
+function toggleCatBlock(type, id) {
+  const cat = allCatsOf(type).find(c => String(c.category_id) === id); if (!cat) return;
+  const bl = catSet('blocked', S.activeId, type), al = catSet('allowed', S.activeId, type);
+  const was = catBlocked(type, cat);
+  const rm = (arr, v) => { const i = arr.indexOf(v); if (i >= 0) arr.splice(i, 1); };
+  rm(bl, id); rm(al, id);
+  const auto = pc().auto !== false && ADULT_RX.test(cat.category_name || '');
+  if (was && auto) al.push(id); else if (!was && !auto) bl.push(id);
+  saveCfg();
+  const top = $('sheet-body').scrollTop; renderBlockedCats(); $('sheet-body').scrollTop = top;
+  S.view = { live: null, vod: null, series: null };
 }
 
 /* ═══════════════════════════ DIAGNÓSTICO ═══════════════════════════ */
@@ -798,7 +921,9 @@ async function runDiagnostics() {
 }
 
 /* ═══════════════════════════ CATÁLOGO ═══════════════════════════ */
-function catsOf(type) { return (S.session && S.session.categories[type]) || []; }
+function allCatsOf(type) { return (S.session && S.session.categories[type]) || []; }
+// Categorías visibles: con el control parental bloqueado se ocultan las de adultos y las elegidas.
+function catsOf(type) { const all = allCatsOf(type); return parentalLocked() ? all.filter(c => !catBlocked(type, c)) : all; }
 
 // Lista de una categoría (o de todo el tipo con catId = '*'), con caché.
 async function getList(type, catId) {
@@ -865,6 +990,7 @@ function categoryListHtml(type) {
   const row = (key, name, sub, ic) => `<button class="row cat-row" data-name="${esc(String(name).toLowerCase())}" onclick="selectCat('${type}',${jsArg(String(key))})">
       <span class="cat-ic">${icon(ic)}</span><span class="n"><b>${esc(name)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>${icon('chev', 'chev')}</button>`;
   return `${cats.length > 10 ? `<div class="search">${icon('search')}<input type="text" placeholder="Buscar categoría" oninput="filterCatRows(this)" autocomplete="off"></div>` : ''}
+    ${parentalLocked() && allCatsOf(type).length > cats.length ? `<button class="row cat-row" onclick="askUnlock()"><span class="cat-ic" style="color:var(--warn)">${icon('lock')}</span><span class="n"><b>${allCatsOf(type).length - cats.length} ${allCatsOf(type).length - cats.length === 1 ? 'categoría oculta' : 'categorías ocultas'}</b><small>Control parental activo · toca para desbloquear</small></span>${icon('chev', 'chev')}</button>` : ''}
     <div class="cat-rows">${favN ? row('fav', 'Favoritos', `${favN} guardados`, 'star') : ''}
     ${cats.map(c => row(c.category_id, c.category_name || 'Sin nombre', counts ? `${fmtNum(counts[c.category_id] || 0)} ${type === 'live' ? 'canales' : type === 'vod' ? 'películas' : 'series'}` : '', 'folder')).join('')}</div>`;
 }
@@ -890,6 +1016,7 @@ async function loadLive(cat) {
   $('live-chips').innerHTML = chipsHtml('live', cat);
   const on = $('live-chips').querySelector('.chip.on'); if (on) on.scrollIntoView({ inline: 'center', block: 'nearest' });
   const body = $('live-body'); $('live-bar').hidden = true;
+  body.classList.remove('guide-mode'); stopGuideClock();
   stopChecks();
   S.liveAll = [];
   if (cat === '*') { body.scrollTop = 0; body.innerHTML = categoryListHtml('live'); return; }
@@ -902,7 +1029,8 @@ async function loadLive(cat) {
     body.innerHTML = cat === 'fav' ? emptyState('star', 'Aún no tienes favoritos', 'Toca la estrella de un canal para tenerlo siempre a mano aquí.') : emptyState('live', 'Esta categoría está vacía', 'Elige otra categoría arriba.');
     return;
   }
-  S.liveAll = items;
+  S.liveAll = filterAllowed('live', items);
+  if (!S.liveAll.length) { body.innerHTML = emptyState('lock', 'Contenido oculto', 'El control parental oculta lo que hay aquí.', `<button class="btn" onclick="askUnlock()">${icon('lock')}Desbloquear</button>`); return; }
   renderLiveList();
 }
 
@@ -911,6 +1039,8 @@ function liveVisibleItems() {
   return S.onlineOnly ? all.filter(i => S.status[i.stream_id] !== false) : all;
 }
 function renderLiveList() {
+  if (liveViewMode() === 'guide') { renderGuide(); return; }
+  $('live-body').classList.remove('guide-mode'); stopGuideClock();
   const body = $('live-body'), items = liveVisibleItems();
   S.rendered.live = items;
   body.scrollTop = 0;
@@ -960,6 +1090,8 @@ function updateLiveBar() {
   bc.hidden = !running && pending === 0;
   bc.innerHTML = running ? `<span class="spinner"></span>Detener` : `${icon('check')}${on + off ? 'Seguir verificando' : 'Verificar canales'}`;
   $('btn-online').hidden = on + off === 0;
+  const bv = $('btn-view');
+  if (bv) bv.innerHTML = liveViewMode() === 'guide' ? `${icon('list')}Lista` : `${icon('history')}Guía`;
   $('live-count').textContent = on + off ? `${on} en línea${off ? ` · ${off} caídos` : ''}${running ? ` · revisando` : ''}` : `${fmtNum(all.length)} canales`;
   $('live-bar-on').style.width = `${on / all.length * 100}%`;
   $('live-bar-off').style.width = `${off / all.length * 100}%`;
@@ -969,6 +1101,122 @@ function toggleOnlineOnly() {
   S.onlineOnly = !S.onlineOnly; S.cfg.onlineOnly = S.onlineOnly; saveCfg();
   renderLiveList();
   if (S.onlineOnly) toast('Se ocultan los canales caídos');
+}
+
+/* ═══════════════════════════ GUÍA POR HORAS ═══════════════════════════ */
+// Rejilla canal × hora para la categoría abierta. La guía de cada canal se pide
+// solo cuando su fila aparece en pantalla, de a 2 y con pausa (no satura servidores).
+const G = { ppm: 4, chW: 132, hours: 6, start: 0, end: 0, shown: 0, clock: null };
+S.epgFull = {};
+function liveViewMode() { return S.cfg.liveView === 'guide' ? 'guide' : 'list'; }
+function toggleLiveView() { S.cfg.liveView = liveViewMode() === 'guide' ? 'list' : 'guide'; saveCfg(); renderLiveList(); }
+function stopGuideClock() { if (G.clock) { clearInterval(G.clock); G.clock = null; } }
+let guideObserver = null, guideRowObserver = null;
+function renderGuide() {
+  const body = $('live-body'), items = liveVisibleItems();
+  S.rendered.live = items;
+  G.ppm = window.IS_TV ? 5 : 4; G.chW = window.IS_TV ? 200 : 128;
+  const now = Date.now() / 1000;
+  G.start = Math.floor(now / 1800) * 1800 - 1800; G.end = G.start + G.hours * 3600;
+  const W = (G.end - G.start) / 60 * G.ppm;
+  let head = '';
+  for (let t = G.start; t < G.end; t += 1800) head += `<span style="width:${30 * G.ppm}px">${fmtTime(t)}</span>`;
+  body.classList.add('guide-mode');
+  body.innerHTML = `<div class="guide" id="guide"><div class="g-inner" style="width:${G.chW + W}px">
+      <div class="g-head"><span class="g-corner" style="width:${G.chW}px">Hoy</span>${head}</div>
+      <div id="g-rows"></div><div class="g-now" id="g-now"></div><div class="more-sentinel" id="g-more"></div>
+    </div></div>`;
+  G.shown = 0;
+  if (guideRowObserver) guideRowObserver.disconnect();
+  guideRowObserver = new IntersectionObserver(es => es.forEach(e => {
+    if (!e.isIntersecting) return;
+    guideRowObserver.unobserve(e.target);
+    const sid = e.target.dataset.sid;
+    if (!S.epgFull[sid]) { guideQueue.push(sid); pumpGuide(); }
+  }), { root: $('guide'), rootMargin: '150px 0px' });
+  appendGuide();
+  if (guideObserver) guideObserver.disconnect();
+  guideObserver = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) appendGuide(); }, { root: $('guide'), rootMargin: '500px 0px' });
+  guideObserver.observe($('g-more'));
+  placeNowLine();
+  stopGuideClock(); G.clock = setInterval(placeNowLine, 60000);
+  updateLiveBar();
+}
+function placeNowLine() {
+  const l = $('g-now'); if (!l) { stopGuideClock(); return; }
+  const x = G.chW + (Date.now() / 1000 - G.start) / 60 * G.ppm;
+  l.style.left = `${x}px`;
+}
+function appendGuide() {
+  const rows = $('g-rows'); if (!rows) return;
+  const items = S.rendered.live, from = G.shown, to = Math.min(items.length, from + 40);
+  if (from >= to) return;
+  let html = '';
+  for (let i = from; i < to; i++) {
+    const it = items[i], sid = String(it.stream_id), name = itemName(it);
+    html += `<div class="g-row" data-sid="${esc(sid)}">
+      <button class="g-ch" style="width:${G.chW}px" onclick="playLive(${i})">${logoHtml(name, it.stream_icon)}<span>${esc(name)}</span></button>
+      <div class="g-line" data-sid="${esc(sid)}">${guideBlocks(sid, i)}</div></div>`;
+  }
+  rows.insertAdjacentHTML('beforeend', html);
+  G.shown = to;
+  rows.querySelectorAll('.g-row:not([data-obs])').forEach(r => { r.dataset.obs = '1'; guideRowObserver.observe(r); });
+}
+function guideBlocks(sid, idx) {
+  const list = S.epgFull[sid];
+  if (!list) return `<span class="g-empty">${S.epgOff ? 'Sin guía' : 'Cargando guía…'}</span>`;
+  const now = Date.now() / 1000;
+  const vis = list.filter(p => p.e > G.start && p.s < G.end);
+  if (!vis.length) return `<span class="g-empty">Sin guía para estas horas</span>`;
+  return vis.map((p, k) => {
+    const a = Math.max(p.s, G.start), b = Math.min(p.e, G.end);
+    const left = (a - G.start) / 60 * G.ppm, w = Math.max(18, (b - a) / 60 * G.ppm - 3);
+    const st = p.e <= now ? 'past' : p.s <= now ? 'now' : '';
+    return `<button class="g-prog ${st}" style="left:${left}px;width:${w}px" onclick="openProgram(${jsArg(sid)},${list.indexOf(p)},${idx})"><b>${esc(p.t)}</b><small>${fmtTime(p.s)}</small></button>`;
+  }).join('');
+}
+const guideQueue = []; let guideActive = 0;
+function pumpGuide() {
+  while (guideActive < 2 && guideQueue.length && !S.epgOff && !isRejecting()) {
+    const sid = guideQueue.shift(); if (S.epgFull[sid]) continue;
+    guideActive++;
+    fetchEpgFull(sid).finally(() => { guideActive--; setTimeout(pumpGuide, 350); });
+  }
+  if (S.epgOff) document.querySelectorAll('.g-line .g-empty').forEach(e => { e.textContent = 'Sin guía'; });
+}
+async function fetchEpgFull(sid) {
+  if (!S.session) return;
+  const accId = S.session.id;
+  let list = [];
+  try {
+    const d = await apiGet(`${S.session.apiUrl}&action=get_short_epg&stream_id=${encodeURIComponent(sid)}&limit=14`, 12000, { noBrake: true });
+    list = (d.epg_listings || []).map(x => ({ t: decodeB64(x.title).trim(), d: decodeB64(x.description || '').trim(), s: +x.start_timestamp || 0, e: +x.stop_timestamp || 0 }))
+      .filter(x => x.t && x.e > x.s).sort((a, b) => a.s - b.s);
+  } catch (e) { if (e && REJECT.has(e.status)) S.epgOff = true; }
+  if (!S.session || S.session.id !== accId) return;
+  S.epgFull[sid] = list;
+  // También alimenta la línea "Ahora" de la vista de lista.
+  const now = Date.now() / 1000, cur = list.find(p => p.s <= now && p.e > now);
+  if (cur && !S.epg[sid]) S.epg[sid] = { text: `Ahora: ${cur.t} · ${fmtTime(cur.s)}`, pct: Math.round((now - cur.s) / (cur.e - cur.s) * 100) };
+  document.querySelectorAll(`.g-line[data-sid="${CSS.escape(String(sid))}"]`).forEach(el => {
+    const idx = S.rendered.live.findIndex(it => String(it.stream_id) === String(sid));
+    el.innerHTML = guideBlocks(sid, idx);
+  });
+}
+function openProgram(sid, k, idx) {
+  const p = (S.epgFull[sid] || [])[k]; if (!p) return;
+  const it = S.rendered.live[idx], now = Date.now() / 1000;
+  const live = p.s <= now && p.e > now, past = p.e <= now;
+  const day = new Date(p.s * 1000).toDateString() === new Date().toDateString() ? 'Hoy' : new Date(p.s * 1000).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric' });
+  const pct = live ? Math.round((now - p.s) / (p.e - p.s) * 100) : 0;
+  showSheet(p.t, `
+    <div class="hint" style="margin:-4px 0 10px">${esc(it ? itemName(it) : '')} · ${esc(day)} ${fmtTime(p.s)} – ${fmtTime(p.e)}${live ? ' · <b style="color:var(--off)">EN VIVO</b>' : past ? ' · ya terminó' : ''}</div>
+    ${live ? `<div class="upd-bar" style="margin:0 0 12px"><i style="width:${pct}%"></i></div>` : ''}
+    ${p.d ? `<p class="syn" style="margin-top:0">${esc(p.d)}</p>` : '<div class="hint">Sin descripción.</div>'}
+    <div class="list-actions" style="margin-top:16px">
+      ${it ? `<button class="btn primary" onclick="closeTop();playLive(${idx})">${icon('play')}${live ? 'Ver ahora' : 'Ver el canal'}</button>` : ''}
+      <button class="btn" onclick="closeTop()">Cerrar</button>
+    </div>`);
 }
 
 /* ─── Verificación de canales (Kotlin: NativeChecker) ─── */
@@ -1115,7 +1363,7 @@ function continueItems(type, sess) {
   try { if (window.NativeApp && NativeApp.getContinueWatching) list = JSON.parse(NativeApp.getContinueWatching() || '[]'); } catch { }
   const acc = sess || S.session; if (!acc) return [];
   const prefix = `${acc.host}/${type === 'vod' ? 'movie' : 'series'}/${acc.username}/`;
-  return list.filter(x => x.url && x.url.startsWith(prefix) && x.dur > 0).slice(0, 15);
+  return list.filter(x => x.url && x.url.startsWith(prefix) && x.dur > 0 && !(parentalLocked() && ADULT_RX.test(x.name || ''))).slice(0, 15);
 }
 function continueHtml(type) {
   const list = continueItems(type);
@@ -1150,6 +1398,7 @@ async function loadGrid(type, cat) {
     return;
   }
   // Más recientes primero cuando el servidor da la fecha en que se agregó.
+  items = filterAllowed(type, items);
   if (items[0] && items[0].added) items = [...items].sort((a, b) => (+b.added || 0) - (+a.added || 0));
   S.rendered[type] = items;
   wrap.innerHTML = `<div class="hint" style="margin-bottom:10px">${fmtNum(items.length)} ${type === 'vod' ? 'películas' : 'series'}</div><div class="grid" id="${type}-grid"></div><div class="more-sentinel" id="${type}-more"></div>`;
@@ -1386,7 +1635,8 @@ async function runSearch(force) {
       if (!inMem) body.innerHTML = loadingHtml(`Descargando ${TYPES[t].label.toLowerCase()} de ${serverName(acc)} (${step} de ${steps})…`);
       try {
         const all = await getListFor(acc, t);
-        found[t] = all.filter(it => normTxt(itemName(it)).includes(nq)).sort((x, y) => itemName(x).localeCompare(itemName(y)));
+        if (parentalLocked()) await loadAccCats(acc.id);
+        found[t] = filterAllowed(t, all.filter(it => normTxt(itemName(it)).includes(nq)), acc.id).sort((x, y) => itemName(x).localeCompare(itemName(y)));
       } catch (e) { errors.push({ acc, t, e }); }
       if (gen !== searchGen) return;
     }
@@ -1590,6 +1840,16 @@ function openSettings() {
       <div class="field"><label for="tg-chatid">Chat ID</label><input class="input" id="tg-chatid" value="${esc(S.cfg.chatId || '')}" placeholder="942555986" inputmode="numeric"></div>
       <div class="list-actions"><button class="btn sm primary" onclick="saveTgConfig()">Guardar</button><button class="btn sm" onclick="testTelegram()">Enviar prueba</button></div>
       <div id="tg-status"></div>
+    </div>
+    <div class="set-title">Control parental</div>
+    <div class="set-group">
+      ${!parentalOn()
+        ? `<button class="set-row" onclick="setupParental()"><span class="n"><b>Activar control parental</b><small>Oculta con un PIN el contenido para adultos y las categorías que elijas</small></span>${icon('lock')}</button>`
+        : `<button class="set-row" onclick="${parentalLocked() ? 'askUnlock()' : 'lockNow()'}"><span class="n"><b>${parentalLocked() ? 'Bloqueado' : 'Desbloqueado temporalmente'}</b><small>${parentalLocked() ? 'Toca para desbloquear con el PIN' : 'Se vuelve a bloquear solo en 1 hora o al cerrar la app. Toca para bloquear ya.'}</small></span>${icon(parentalLocked() ? 'lock' : 'lock-open')}</button>
+           <button class="set-row" onclick="toggleAutoAdult()"><span class="n"><b>Ocultar contenido para adultos</b><small>Detecta por nombre: adultos, XXX, +18, eróticos…</small></span><span class="switch${pc().auto !== false ? ' on' : ''}"></span></button>
+           <button class="set-row" onclick="openBlockedCats()"><span class="n"><b>Elegir categorías bloqueadas</b><small>De la cuenta activa: TV, películas y series</small></span>${icon('chev')}</button>
+           <button class="set-row" onclick="changePin()"><span class="n"><b>Cambiar PIN</b></span>${icon('chev')}</button>
+           <button class="set-row" onclick="disableParental()"><span class="n"><b style="color:var(--off)">Desactivar control parental</b></span></button>`}
     </div>
     <div class="set-title">Vencimientos</div>
     <div class="set-group">

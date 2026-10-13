@@ -38,6 +38,8 @@
 <symbol id="i-tv" viewBox="0 0 24 24"><path d="M21 3H3a2 2 0 00-2 2v12a2 2 0 002 2h5v2h8v-2h5a2 2 0 002-2V5a2 2 0 00-2-2zm0 14H3V5h18v12z"/></symbol>
 <symbol id="i-folder" viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></symbol>
 <symbol id="i-chev" viewBox="0 0 24 24"><path d="M8.6 16.6L13.2 12 8.6 7.4 10 6l6 6-6 6z"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><path d="M18 8h-1V6a5 5 0 00-10 0v2H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V10a2 2 0 00-2-2zm-6 9a2 2 0 110-4 2 2 0 010 4zm3.1-9H8.9V6a3.1 3.1 0 016.2 0v2z"/></symbol>
+<symbol id="i-lock-open" viewBox="0 0 24 24"><path d="M12 17a2 2 0 100-4 2 2 0 000 4zm6-9h-1V6a5 5 0 00-10 0h1.9a3.1 3.1 0 016.2 0v2H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V10a2 2 0 00-2-2zm0 12H6V10h12v10z"/></symbol>
 <symbol id="i-history" viewBox="0 0 24 24"><path d="M13 3a9 9 0 00-9 9H1l3.9 3.9.1.1L9 12H6a7 7 0 112.05 4.95l-1.42 1.42A9 9 0 1013 3zm-1 5v5l4.25 2.52.77-1.28-3.52-2.09V8z"/></symbol>
 </defs></svg>
 
@@ -61,6 +63,7 @@
       <div class="chips" id="live-chips"></div>
       <div class="livebar" id="live-bar" hidden>
         <span id="live-count"></span><span class="bar"><i id="live-bar-on" style="width:0"></i><u id="live-bar-off" style="width:0"></u></span>
+        <button class="btn sm" id="btn-view" onclick="toggleLiveView()"></button>
         <button class="btn sm" id="btn-check" onclick="checkCurrent()"></button>
         <button id="btn-online" onclick="toggleOnlineOnly()" hidden><span>Solo en línea</span><span class="switch" id="sw-online"></span></button>
       </div>
