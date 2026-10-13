@@ -353,3 +353,17 @@ body.tv .detail .body,body.tv .detail .head{max-width:1100px;margin-left:auto;ma
 body.tv .detail .hero{height:230px}
 body.tv .btn.primary:focus{box-shadow:0 0 0 3px #fff,0 0 22px rgba(var(--ar),.6)}
 body.tv .chip.on:focus{box-shadow:0 0 0 3px #fff}
+
+/* ═══ Agregar desde el celular ═══ */
+.remote{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.remote .qr{width:200px;height:200px;border-radius:14px;background:#fff;padding:8px;image-rendering:pixelated;flex-shrink:0}
+.remote-txt{flex:1;min-width:200px}
+.remote-txt b{font-size:16px;display:block;margin-bottom:6px}
+.remote-txt p{font-size:13.5px;color:var(--muted);line-height:1.5;margin-bottom:10px}
+.remote-txt small{font-size:12px;color:var(--muted);display:block}
+.remote-txt code{display:block;font-family:inherit;font-size:14px;font-weight:650;color:var(--accent);word-break:break-all;margin-top:2px}
+/* ═══ Actualización ═══ */
+.notes{margin:0 0 4px 18px;font-size:14px;line-height:1.55;color:var(--text)}
+.notes li{margin-bottom:4px}
+.upd-bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:14px 0 8px}
+.upd-bar i{display:block;height:100%;background:var(--accent);transition:width .2s}
