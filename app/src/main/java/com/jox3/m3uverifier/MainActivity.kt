@@ -117,7 +117,17 @@ class MainActivity : AppCompatActivity() {
         pendingApk?.let { f ->
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()) installApk(f)
         }
-        if (pageLoaded) deliverPendingAdds()
+        if (pageLoaded) {
+            deliverPendingAdds()
+            webView.evaluateJavascript("window.onAppResume && window.onAppResume();", null)
+        }
+    }
+
+    // Avisa a la interfaz cuando la app queda detrás (reproductor abierto, pantalla apagada):
+    // así la precarga de catálogos no gasta datos mientras ves algo.
+    override fun onPause() {
+        if (pageLoaded) webView.evaluateJavascript("window.onAppPause && window.onAppPause();", null)
+        super.onPause()
     }
 
     /** Pasa al HTML los items que el usuario añadió desde el reproductor. */

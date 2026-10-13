@@ -329,9 +329,21 @@ async function refreshActive(silent) {
   } finally { refreshing = false; }
 }
 
-function deleteAccount(id) {
+// Confirmaciones con el estilo de la app (en lugar del cuadro gris de Android).
+let confirmAction = null;
+function askConfirm(title, text, okLabel, onOk, danger = true) {
+  confirmAction = onOk;
+  showSheet(title, `${text ? `<p class="confirm-txt">${text}</p>` : ''}
+    <div class="list-actions confirm-actions">
+      <button class="btn ${danger ? 'danger' : 'primary'}" onclick="runConfirm()">${danger ? icon('trash') : icon('check')}${esc(okLabel)}</button>
+      <button class="btn" onclick="confirmAction=null;closeTop()">Cancelar</button>
+    </div>`);
+}
+function runConfirm() { const fn = confirmAction; confirmAction = null; closeTop(); if (fn) fn(); }
+
+function deleteAccount(id, sure) {
   const acc = accountById(id); if (!acc) return;
-  if (!confirm(`¿Eliminar la cuenta ${acc.username}?`)) return;
+  if (!sure) { askConfirm('Eliminar cuenta', `Se borra <b>${esc(acc.username)}</b> (${esc(hostLabel(acc.host))}) y sus favoritos de este equipo.`, 'Eliminar', () => deleteAccount(id, true)); return; }
   S.accounts = S.accounts.filter(a => a.id !== id); saveAccounts();
   delete S.favs[id]; saveFavs();
   if (S.activeId === id) {
@@ -531,10 +543,10 @@ async function verifyAll() {
   const sum = expirySummary(S.accounts);
   toast(`${ok} verificadas${fail ? ` · ${fail} sin respuesta` : ''}${sum.expired ? ` · ${sum.expired} vencidas` : ''}${sum.soon ? ` · ${sum.soon} por vencer` : ''}`, fail ? 'err' : 'ok');
 }
-function deleteExpired() {
+function deleteExpired(sure) {
   const exp = S.accounts.filter(a => a.status && (a.status !== 'Active' || (daysLeft(a) !== null && daysLeft(a) < 0)));
   if (!exp.length) return;
-  if (!confirm(`¿Eliminar ${exp.length} ${exp.length === 1 ? 'cuenta vencida' : 'cuentas vencidas'}?\n\n${exp.map(a => a.username).join(', ')}`)) return;
+  if (!sure) { askConfirm(`Eliminar ${exp.length} ${exp.length === 1 ? 'cuenta vencida' : 'cuentas vencidas'}`, esc(exp.map(a => a.username).join(', ')), 'Eliminar', () => deleteExpired(true)); return; }
   const ids = new Set(exp.map(a => a.id));
   S.accounts = S.accounts.filter(a => !ids.has(a.id)); saveAccounts();
   ids.forEach(id => delete S.favs[id]); saveFavs();
@@ -869,7 +881,7 @@ function setupParental() {
   });
 }
 function disableParental() {
-  withParental(() => { if (!confirm('¿Desactivar el control parental?')) return; const p = pc(); p.on = false; saveCfg(); toast('Control parental desactivado'); resetCatalogViews(); });
+  withParental(() => askConfirm('Desactivar control parental', 'Se vuelven a mostrar todas las categorías, también las de adultos.', 'Desactivar', () => { const p = pc(); p.on = false; saveCfg(); toast('Control parental desactivado'); resetCatalogViews(); }));
 }
 function changePin() { withParental(() => setupParental()); }
 function toggleAutoAdult() { withParental(() => { pc().auto = pc().auto === false; saveCfg(); resetCatalogViews(); }); }
@@ -958,7 +970,7 @@ async function fetchList(type, catId) {
   const key = `${type}:${catId}`;
   const dbKey = `list:${S.session.id}:${key}`;
   const cached = await idb.get(dbKey);
-  if (cached && Date.now() - cached.ts < TTL_STREAMS && Array.isArray(cached.items)) { S.lists[key] = cached.items; return cached.items; }
+  if (cached && Date.now() - cached.ts < TTL_STREAMS && Array.isArray(cached.items)) { S.lists[key] = cached.items; if (catId === '*') markFresh(S.session.id, type, cached.ts); return cached.items; }
   // Si ya tenemos la lista completa, se filtra sin pedir nada al servidor.
   if (catId !== '*' && S.lists[`${type}:*`]) {
     const items = S.lists[`${type}:*`].filter(i => String(i.category_id) === String(catId));
@@ -969,6 +981,7 @@ async function fetchList(type, catId) {
   const items = Array.isArray(data) ? data : [];
   S.lists[key] = items;
   idb.set(dbKey, { ts: Date.now(), items });
+  if (catId === '*') markFresh(S.session.id, type);
   return items;
 }
 
@@ -1976,12 +1989,62 @@ async function getListFor(acc, type) {
   if (S.accLists[key]) return S.accLists[key];
   const dbKey = `list:${acc.id}:${type}:*`;
   const cached = await idb.get(dbKey);
-  if (cached && Date.now() - cached.ts < TTL_STREAMS && Array.isArray(cached.items)) return (S.accLists[key] = cached.items);
+  if (cached && Date.now() - cached.ts < TTL_STREAMS && Array.isArray(cached.items)) { markFresh(acc.id, type, cached.ts); return (S.accLists[key] = cached.items); }
   const data = await apiGet(`${apiUrlOf(acc)}&action=${TYPES[type].streams}`, 90000, { noBrake: true });
   const items = Array.isArray(data) ? data : [];
   S.accLists[key] = items; idb.set(dbKey, { ts: Date.now(), items });
+  markFresh(acc.id, type);
   return items;
 }
+
+/* ─── Precarga lenta del catálogo completo ─── */
+// Primero la cuenta con la que arrancas (lo hace Inicio). Después, en segundo plano y con mucha
+// pausa entre una descarga y otra, el resto de catálogos de todas tus cuentas activas: así la
+// búsqueda universal ya los tiene guardados. Se pausa mientras ves algo o la app está detrás.
+const PRE_GAP = 45e3, PRE_FIRST = 40e3;
+const PRE = { timer: null, fail: {}, busy: false, last: '' };
+const freshIdx = () => store.get('jox3fresh', {}) || {};
+function markFresh(accId, type, ts = Date.now()) { const f = freshIdx(); f[`${accId}:${type}`] = ts; store.set('jox3fresh', f); }
+function isFresh(accId, type) { const t = freshIdx()[`${accId}:${type}`]; return !!t && Date.now() - t < TTL_STREAMS; }
+function preloadOn() { return S.cfg.preload !== false; }
+function preloadJobs() {
+  const accs = usableAccounts(), jobs = [];
+  const act = accs.find(a => a.id === S.activeId);
+  const order = act ? [act, ...accs.filter(a => a !== act)] : accs;
+  for (const a of order) for (const t of ['live', 'vod', 'series']) jobs.push({ acc: a, type: t });
+  return jobs;
+}
+function preloadStatus() {
+  const jobs = preloadJobs(); const ok = jobs.filter(j => isFresh(j.acc.id, j.type)).length;
+  return { ok, total: jobs.length };
+}
+function schedulePreload(ms = PRE_GAP) {
+  clearTimeout(PRE.timer); PRE.timer = null;
+  if (preloadOn()) PRE.timer = setTimeout(preloadStep, ms);
+}
+async function preloadStep() {
+  PRE.timer = null;
+  if (!preloadOn() || PRE.busy) return;
+  // No molestar: app detrás o reproduciendo, verificando cuentas, o un servidor frenando.
+  if (S.paused || document.hidden || bulk.running || isRejecting() || chk.inflight || chk.queue.length) { schedulePreload(PRE_GAP); return; }
+  const job = preloadJobs().find(j => !isFresh(j.acc.id, j.type) && Date.now() - (PRE.fail[`${j.acc.id}:${j.type}`] || 0) > 3600e3);
+  if (!job) { schedulePreload(30 * 60e3); return; }   // todo al día: revisar de nuevo en media hora
+  PRE.busy = true; PRE.last = `${serverName(job.acc)} · ${TYPES[job.type].label}`;
+  try {
+    if (job.acc.id === S.activeId && S.session) await getList(job.type, '*');
+    else {
+      // Otras cuentas: se guarda en el equipo, sin dejarlo en memoria (los TV box tienen poca).
+      const data = await apiGet(`${apiUrlOf(job.acc)}&action=${TYPES[job.type].streams}`, 120000, { noBrake: true });
+      const items = Array.isArray(data) ? data : [];
+      await idb.set(`list:${job.acc.id}:${job.type}:*`, { ts: Date.now(), items });
+      markFresh(job.acc.id, job.type);
+    }
+  } catch (e) { PRE.fail[`${job.acc.id}:${job.type}`] = Date.now(); }
+  PRE.busy = false;
+  schedulePreload(PRE_GAP);
+}
+window.onAppPause = () => { S.paused = true; };
+window.onAppResume = () => { S.paused = false; };
 function openSearch() {
   if (!S.accounts.length) { toast('Primero agrega una cuenta', 'err'); switchTab('home'); return; }
   if (usableAccounts().length < 2) S.searchScope = 'active';
@@ -2122,8 +2185,9 @@ function playFromList(i) {
   nativePlay(S.myList.map(it => ({ name: it.name, url: it.url, streamId: '', isLive: it.url.includes('/live/'), poster: it.thumbnail || '' })), i, 'Mi lista');
 }
 function removeFromList(idx) { S.myList.splice(idx, 1); S.thumbnails.splice(idx, 1); saveMyList(); updateListBadge(); renderMyList(); }
-function clearList() {
-  if (!S.myList.length) return; if (!confirm('¿Vaciar toda la lista?')) return;
+function clearList(sure) {
+  if (!S.myList.length) return;
+  if (!sure) { askConfirm('Vaciar Mi lista', `Se quitan los ${S.myList.length} elementos de la lista.`, 'Vaciar', () => clearList(true)); return; }
   S.myList = []; S.thumbnails = []; saveMyList(); updateListBadge(); renderMyList(); toast('Lista vaciada');
 }
 function buildM3U() {
@@ -2218,6 +2282,7 @@ function openSettings() {
       <button class="set-row" onclick="S.cfg.autoCheck=!S.cfg.autoCheck;saveCfg();openSettings()"><span class="n"><b>Verificar canales automáticamente</b><small>Al abrir una categoría. Algunos servidores bloquean la IP si se verifican muchos canales; si pasa, déjalo apagado y usa el botón Verificar canales.</small></span><span class="switch${S.cfg.autoCheck ? ' on' : ''}"></span></button>
       <button class="set-row" onclick="S.cfg.showEpg=S.cfg.showEpg===false;saveCfg();openSettings()"><span class="n"><b>Mostrar la guía en la lista</b><small>Lo que están pasando en cada canal</small></span><span class="switch${S.cfg.showEpg !== false ? ' on' : ''}"></span></button>
       <button class="set-row" onclick="S.cfg.homeNew=S.cfg.homeNew===false;saveCfg();openSettings();if(S.tab==='home')renderHome()"><span class="n"><b>Estrenos en Inicio</b><small>Descarga el catálogo una vez cada 6 horas para mostrar lo nuevo. Apágalo si tu TV box es lento.</small></span><span class="switch${S.cfg.homeNew !== false ? ' on' : ''}"></span></button>
+      <button class="set-row" onclick="S.cfg.preload=S.cfg.preload===false;saveCfg();schedulePreload(5000);openSettings()"><span class="n"><b>Descargar catálogos en segundo plano</b><small>${(() => { const p = preloadStatus(); return `Despacio y con pausas, para que la búsqueda sea rápida. ${p.total ? `Listos ${p.ok} de ${p.total}.` : ''}`; })()}</small></span><span class="switch${S.cfg.preload !== false ? ' on' : ''}"></span></button>
       <button class="set-row" onclick="toggleOnlineOnly();openSettings()"><span class="n"><b>Ocultar canales caídos</b><small>En la pestaña En vivo, tras verificarlos</small></span><span class="switch${S.onlineOnly ? ' on' : ''}"></span></button>
     </div>
     <div class="set-title">Tema</div>
@@ -2312,12 +2377,24 @@ function showUpdateWhenFree(now) {
   if (now || !S.stack.length) { showUpdateSheet(); return; }
   setTimeout(() => showUpdateWhenFree(false), 20000);
 }
+// Novedades de la versión, tal como vienen publicadas: una por renglón, sin marcas de formato.
+function releaseNotes(txt) {
+  return String(txt || '').replace(/\r/g, '').split('\n')
+    .map(l => l.replace(/^\s*[-*•]\s*/, '').replace(/\*\*|__|`/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').trim())
+    .filter(l => l && !/^#|generated with|claude\.ai|^merge pull request|co-authored-by|claude-session|^https?:/i.test(l)).slice(0, 10);
+}
+function notesHtml(notes) {
+  return notes.length ? `<div class="whatsnew">${notes.map(n => {
+    const m = n.match(/^([^:]{3,40}):\s+(.+)$/);   // "Chromecast: transmite al TV" → título en negrita
+    return `<div class="wn">${icon('check')}<span>${m ? `<b>${esc(m[1])}:</b> ${esc(m[2])}` : esc(n)}</span></div>`;
+  }).join('')}</div>` : '';
+}
 function showUpdateSheet() {
   const u = S.update; if (!u) return;
-  const notes = u.notes.replace(/\r/g, '').split('\n').map(l => l.replace(/^[-*]\s*/, '').trim()).filter(l => l && !/^#|generated with|claude\.ai|^merge pull request|co-authored-by|claude-session/i.test(l)).slice(0, 8);
-  showSheet(`Versión ${u.ver} disponible`, `
-    <div class="hint" style="margin:-4px 0 10px">Tienes la ${esc(appVersion())}${u.size ? ` · descarga de ${(u.size / 1048576).toFixed(1)} MB` : ''}. Se instala encima, sin perder tus cuentas ni tu lista.</div>
-    ${notes.length ? `<ul class="notes">${notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+  const notes = releaseNotes(u.notes);
+  showSheet(`Nueva versión ${u.ver}`, `
+    <div class="hint" style="margin:-4px 0 12px">Tienes la ${esc(appVersion())}${u.size ? ` · descarga de ${(u.size / 1048576).toFixed(1)} MB` : ''}. Se instala encima, sin perder tus cuentas ni tu lista.</div>
+    ${notes.length ? `<div class="set-title" style="margin:0 0 8px">Qué trae esta actualización</div>${notesHtml(notes)}` : `<div class="hint">Mejoras y correcciones.</div>`}
     <div id="upd-progress" hidden><div class="upd-bar"><i id="upd-bar" style="width:0"></i></div><div class="hint" id="upd-txt">Descargando…</div></div>
     <div class="list-actions" style="margin-top:14px" id="upd-actions">
       <button class="btn primary" onclick="startUpdate()">${icon('save')}Actualizar ahora</button>
@@ -2328,6 +2405,7 @@ function startUpdate() {
   const u = S.update; if (!u) return;
   if (!(window.NativeApp && NativeApp.downloadUpdate)) { window.open(u.url, '_blank'); return; }
   $('upd-progress').hidden = false; $('upd-actions').hidden = true;
+  S.cfg.pendingNotes = { ver: u.ver, notes: u.notes }; saveCfg();   // para mostrarlas al abrir la versión nueva
   NativeApp.downloadUpdate(u.url, u.ver);
 }
 window.onUpdateProgress = function (pct) {
@@ -2366,8 +2444,19 @@ function init() {
   S.tab = first;
   if (activeId) activateAccount(activeId).then(() => switchTab(first)); else switchTab('home');
   setTimeout(pushExpiryWatch, 2500);
+  schedulePreload(PRE_FIRST);
   // Revisar si hay versión nueva (como mucho cada 12 horas).
   if (S.cfg.autoUpdate !== false && Date.now() - (S.cfg.lastUpdateCheck || 0) > 12 * 3600e3) setTimeout(() => checkUpdate(false), 4000);
+  // Recién actualizada: contar qué cambió.
+  const pn = S.cfg.pendingNotes;
+  if (pn && pn.ver) {
+    if (buildNum(appVersion()) >= buildNum(pn.ver)) {
+      delete S.cfg.pendingNotes; saveCfg();
+      const notes = buildNum(appVersion()) === buildNum(pn.ver) ? releaseNotes(pn.notes) : [];
+      if (notes.length) setTimeout(() => showSheet(`Ya tienes la versión ${pn.ver}`, `<div class="set-title" style="margin:0 0 8px">Novedades</div>${notesHtml(notes)}
+        <div class="list-actions" style="margin-top:14px"><button class="btn primary block" onclick="closeTop()">Entendido</button></div>`), 1200);
+    }
+  }
 }
 // Al volver a la app: la guía de lo que están pasando se pone al día sola.
 function refreshExpiredEpg() {
