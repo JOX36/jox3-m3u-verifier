@@ -78,6 +78,7 @@ import androidx.media3.ui.PlayerView
 import androidx.media3.cast.CastPlayer
 import androidx.media3.cast.SessionAvailabilityListener
 import androidx.mediarouter.app.MediaRouteButton
+import androidx.mediarouter.media.MediaRouter
 import com.google.android.gms.cast.framework.CastButtonFactory
 import com.google.android.gms.cast.framework.CastContext
 import org.json.JSONArray
@@ -194,6 +195,11 @@ class PlayerActivity : AppCompatActivity() {
     private var castContext: CastContext? = null
     private var castPlayer: CastPlayer? = null
     private var casting = false
+    private var castScanCb: MediaRouter.Callback? = null
+    private var castMenuOpen = false
+    // Misma letra que el resto de la app (Inter), también en el reproductor.
+    private val fontRegular: Typeface by lazy { loadFont("inter-Regular.otf", Typeface.NORMAL) }
+    private val fontBold: Typeface by lazy { loadFont("inter-Bold.otf", Typeface.BOLD) }
     /** El reproductor que manda en este momento: el del teléfono o el del Chromecast. */
     private val ap: Player get() = if (casting) castPlayer ?: player else player
     private var stoppedAt = 0L
@@ -320,6 +326,7 @@ class PlayerActivity : AppCompatActivity() {
         parsePayload(readPayload(intent))
         castContext = CastSupport.context(this)
         buildUi()
+        applyFonts(root)
         initPlayer()
         initCast()
         setupGestures()
@@ -366,6 +373,7 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         ui.removeCallbacksAndMessages(null)
+        stopCastScan()
         saveResumePosition()
         player.release()
         castPlayer?.setSessionAvailabilityListener(null)
@@ -686,6 +694,58 @@ class PlayerActivity : AppCompatActivity() {
         } catch (e: Throwable) { castPlayer = null }
     }
 
+    private fun openCastMenu() {
+        val selector = try { castContext?.mergedSelector } catch (e: Exception) { null } ?: return
+        if (castScanCb == null) {
+            val cb = object : MediaRouter.Callback() {
+                override fun onRouteAdded(router: MediaRouter, route: MediaRouter.RouteInfo) { refreshCastMenu() }
+                override fun onRouteRemoved(router: MediaRouter, route: MediaRouter.RouteInfo) { refreshCastMenu() }
+                override fun onRouteChanged(router: MediaRouter, route: MediaRouter.RouteInfo) { refreshCastMenu() }
+            }
+            try {
+                MediaRouter.getInstance(this).addCallback(selector, cb, MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN)
+                castScanCb = cb
+            } catch (e: Exception) { }
+        }
+        showCastPanel()
+    }
+
+    private fun showCastPanel() {
+        val selector = try { castContext?.mergedSelector } catch (e: Exception) { null } ?: return
+        val router = MediaRouter.getInstance(this)
+        val sel = router.selectedRoute
+        val rows = mutableListOf<Row>()
+        if (casting || (!sel.isDefault && sel.matchesSelector(selector))) {
+            rows += Row("Transmitiendo a ${castDeviceName()}", current?.name, true, null)
+            rows += Row("Dejar de transmitir", "Seguir viendo en este equipo") {
+                closePanel(); castContext?.sessionManager?.endCurrentSession(true)
+            }
+        } else {
+            val routes = router.routes.filter { !it.isDefault && it.isEnabled && it.matchesSelector(selector) }
+            if (routes.isEmpty()) {
+                rows += Row("Buscando dispositivos…", "El Chromecast o el TV deben estar en la misma red Wi-Fi", false, null)
+            }
+            routes.forEach { r ->
+                rows += Row(r.name, r.description?.takeIf { it.isNotBlank() } ?: "Chromecast", false) {
+                    closePanel()
+                    showOsd("Conectando a ${r.name}…")
+                    try { router.selectRoute(r) } catch (e: Exception) { showOsd("No se pudo conectar") }
+                }
+            }
+        }
+        castMenuOpen = true
+        openPanel("Transmitir a", rows, null)
+    }
+
+    private fun refreshCastMenu() {
+        if (castMenuOpen && panelRoot.visibility == View.VISIBLE) ui.post { if (castMenuOpen) showCastPanel() }
+    }
+
+    private fun stopCastScan() {
+        castScanCb?.let { try { MediaRouter.getInstance(this).removeCallback(it) } catch (e: Exception) { } }
+        castScanCb = null
+    }
+
     private fun castDeviceName(): String =
         try { castContext?.sessionManager?.currentCastSession?.castDevice?.friendlyName } catch (e: Exception) { null } ?: "el TV"
 
@@ -973,7 +1033,10 @@ class PlayerActivity : AppCompatActivity() {
         row.addView(clockView, LinearLayout.LayoutParams(wrap(), wrap()).apply { marginEnd = dp(10) })
         castContext?.let { ctx ->
             try {
-                val b = MediaRouteButton(this)
+                // El selector de dispositivos es propio (con los colores de la app), no el diálogo gris de Android.
+                val b = object : MediaRouteButton(this) {
+                    override fun performClick(): Boolean { openCastMenu(); return true }
+                }
                 CastButtonFactory.setUpMediaRouteButton(applicationContext, b)
                 b.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(buttonBg) }
                 b.setPadding(dp(4), dp(4), dp(4), dp(4))
@@ -1582,6 +1645,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun closePanel() {
+        if (castMenuOpen) { castMenuOpen = false; stopCastScan() }
         if (panelRoot.visibility != View.VISIBLE) return
         panel.animate().translationX(dp(400).toFloat()).setDuration(180).withEndAction {
             panelRoot.visibility = View.GONE
@@ -2025,6 +2089,17 @@ class PlayerActivity : AppCompatActivity() {
     // AYUDAS DE INTERFAZ
     // ═══════════════════════════════════════════════════════════════════
 
+    private fun loadFont(name: String, style: Int): Typeface =
+        try { Typeface.createFromAsset(assets, "fonts/$name") } catch (e: Exception) { Typeface.create(Typeface.DEFAULT, style) }
+
+    private fun applyFonts(v: View) {
+        if (v is TextView) {
+            val bold = ((v.typeface?.style ?: 0) and Typeface.BOLD) != 0
+            v.typeface = if (bold) fontBold else fontRegular
+        }
+        if (v is ViewGroup) for (i in 0 until v.childCount) applyFonts(v.getChildAt(i))
+    }
+
     private fun dp(v: Int) = (v * resources.displayMetrics.density).roundToInt()
     private fun wrap() = ViewGroup.LayoutParams.WRAP_CONTENT
     private fun matchParent() = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
@@ -2106,7 +2181,7 @@ class PlayerActivity : AppCompatActivity() {
         override fun getItemId(position: Int) = position.toLong()
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-            val view = (convertView as? LinearLayout) ?: createRowView()
+            val view = (convertView as? LinearLayout) ?: createRowView().also { applyFonts(it) }
             val bar = view.getChildAt(0)
             val texts = view.getChildAt(1) as LinearLayout
             val title = texts.getChildAt(0) as TextView
@@ -2114,7 +2189,7 @@ class PlayerActivity : AppCompatActivity() {
             val row = rows[position]
             title.text = row.title
             title.setTextColor(if (row.selected) accent else Color.WHITE)
-            title.setTypeface(Typeface.DEFAULT, if (row.selected) Typeface.BOLD else Typeface.NORMAL)
+            title.typeface = if (row.selected) fontBold else fontRegular
             subtitle.text = row.subtitle ?: ""
             subtitle.visibility = if (row.subtitle.isNullOrEmpty()) View.GONE else View.VISIBLE
             bar.visibility = if (row.selected) View.VISIBLE else View.INVISIBLE

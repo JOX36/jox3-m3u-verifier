@@ -560,3 +560,13 @@ body.tv .cgrid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
 body.tv .hacc-main:focus{background:transparent}
 body.tv .scroll.home{padding-top:0}
 body.tv .rail{padding-top:18px}
+.confirm-txt{font-size:14.5px;line-height:1.5;color:var(--muted);margin:-2px 0 16px}
+.confirm-txt b{color:var(--text)}
+.confirm-actions .btn{flex:1}
+/* Novedades de cada versión */
+.whatsnew{display:flex;flex-direction:column;gap:10px}
+.wn{display:flex;gap:10px;align-items:flex-start;font-size:14.5px;line-height:1.45}
+.wn svg.i{width:18px;height:18px;color:var(--on);margin-top:2px;flex-shrink:0}
+.wn b{font-weight:700}
+/* Con una hoja abierta los avisos salen arriba, para no tapar sus botones */
+.sheet.show ~ .toasts{bottom:auto;top:calc(16px + var(--safe-top))}

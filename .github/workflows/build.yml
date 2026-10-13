@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write   # para publicar la versión (Release) con el APK
+  pull-requests: read   # para leer las novedades del PR que se publicó
 
 jobs:
   build:
@@ -62,7 +63,13 @@ jobs:
         run: |
           VERSION="2.0.${{ github.run_number }}"
           cp app/build/outputs/apk/release/app-release.apk "JOX3-Verifier-$VERSION.apk"
-          NOTES=$(printf '%s\n' "$HEAD_MSG" | grep -viE '^(merge pull request|co-authored-by|claude-session)' | sed '/^\s*$/d')
+          # Novedades para el aviso de actualización: la sección "## Novedades" del PR
+          # (en palabras simples). Si no hay, el mensaje del cambio.
+          PR_BODY=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" --jq '.[0].body // ""' 2>/dev/null || true)
+          NOTES=$(printf '%s\n' "$PR_BODY" | tr -d '\r' | awk '/^##+ *Novedades/{f=1;next} /^##/{f=0} f' | sed '/^\s*$/d')
+          if [ -z "$NOTES" ]; then
+            NOTES=$(printf '%s\n' "$HEAD_MSG" | grep -viE '^(merge pull request|co-authored-by|claude-session)' | sed '/^\s*$/d')
+          fi
           gh release create "v$VERSION" "JOX3-Verifier-$VERSION.apk" \
             --title "JOX3 Verifier $VERSION" \
             --notes "${NOTES:-Mejoras y correcciones.}" \
