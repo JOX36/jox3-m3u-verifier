@@ -298,6 +298,20 @@ class MainActivity : AppCompatActivity() {
             }.start()
         }
 
+        /** Lista de cuentas con su vencimiento para los avisos (days = 0 apaga los avisos). */
+        @JavascriptInterface
+        fun setExpiryWatch(json: String, days: Int) {
+            try { ExpiryAlerts.configure(applicationContext, json, days) } catch (e: Exception) { }
+        }
+
+        /** Android 13+: pedir permiso para mostrar notificaciones. */
+        @JavascriptInterface
+        fun requestNotifications() {
+            if (Build.VERSION.SDK_INT >= 33 && !ExpiryAlerts.canNotify(this@MainActivity)) {
+                runOnUiThread { requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 77) }
+            }
+        }
+
         @JavascriptInterface
         fun appVersion(): String = try {
             packageManager.getPackageInfo(packageName, 0).versionName ?: ""

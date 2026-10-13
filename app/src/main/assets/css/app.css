@@ -367,3 +367,7 @@ body.tv .chip.on:focus{box-shadow:0 0 0 3px #fff}
 .notes li{margin-bottom:4px}
 .upd-bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:14px 0 8px}
 .upd-bar i{display:block;height:100%;background:var(--accent);transition:width .2s}
+
+/* ═══ Resumen de vencimientos ═══ */
+.sum-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:-2px 0 6px}
+.sum-row .btn.sm{height:30px;padding:0 10px;font-size:12.5px}

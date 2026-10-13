@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <!-- Instalar las actualizaciones que la app descarga de GitHub. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- Avisos de vencimiento de cuentas. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <!-- TV box / Android TV: sin pantalla táctil obligatoria y visible en el menú de la TV. -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>

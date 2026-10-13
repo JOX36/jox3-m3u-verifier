@@ -75,13 +75,12 @@ function accLevel(acc) {
   const d = daysLeft(acc);
   if (d === null) return 'on';
   if (d < 0) return 'off';
-  if (d < 10) return 'off';
-  if (d < 20) return 'warn';
+  if (d <= alertDays()) return 'warn';
   return 'on';
 }
 function accDaysLabel(acc, short) {
   if (!acc.status) return short ? '—' : 'Sin verificar';
-  if (acc.status !== 'Active') return acc.status === 'Expired' ? 'Vencida' : acc.status;
+  if (acc.status !== 'Active') return ({ Expired: 'Vencida', Disabled: 'Desactivada', Banned: 'Bloqueada' })[acc.status] || acc.status;
   const d = daysLeft(acc);
   if (d === null) return short ? '∞' : 'Ilimitada';
   if (d < 0) return 'Vencida';
@@ -280,8 +279,9 @@ async function verifyAccount(p, onStep = () => { }) {
 
 function upsertAccount(acc) {
   const i = S.accounts.findIndex(a => a.id === acc.id);
-  if (i >= 0) S.accounts[i] = { ...S.accounts[i], ...acc }; else S.accounts.unshift(acc);
+  if (i >= 0) S.accounts[i] = { ...S.accounts[i], ...acc, lastError: '' }; else S.accounts.unshift(acc);
   saveAccounts();
+  clearTimeout(upsertAccount.t); upsertAccount.t = setTimeout(pushExpiryWatch, 800);
   return accountById(acc.id);
 }
 
@@ -438,19 +438,92 @@ function renderAccounts() {
       <div class="more"><button onclick="openAccountPage(${jsArg(acc.id)})">Ver todos los detalles</button></div>
     </div>`;
   }
-  const others = S.accounts.filter(a => a.id !== S.activeId);
+  const others = sortByExpiry(S.accounts.filter(a => a.id !== S.activeId));
   if (others.length) {
-    html += `<h2 class="sec">Otras cuentas <span class="hint">${others.length}</span></h2>`;
+    const sum = expirySummary(S.accounts);
+    html += `<h2 class="sec">Otras cuentas <span class="hint">${others.length}</span>${S.accounts.length > 1 ? `<button onclick="verifyAll()" id="btn-verify-all">${bulk.running ? `Detener (${bulk.done} de ${bulk.total})` : 'Verificar todas'}</button>` : ''}</h2>`;
+    if (sum.expired || sum.soon) html += `<div class="sum-row">
+        ${sum.expired ? `<span class="badge off">${sum.expired} ${sum.expired === 1 ? 'vencida' : 'vencidas'}</span>` : ''}
+        ${sum.soon ? `<span class="badge warn">${sum.soon} por vencer (${alertDays()} días o menos)</span>` : ''}
+        <span class="badge">${sum.ok} al día</span>
+        ${sum.expired ? `<button class="btn sm danger" onclick="deleteExpired()">${icon('trash')}Eliminar vencidas</button>` : ''}
+      </div>`;
     html += others.map(a => `<button class="row" onclick="openAccountActions(${jsArg(a.id)})">
         <span class="dot ${accLevel(a)}"></span>
         <span class="n"><b>${esc(a.username)}</b><small>${esc(hostLabel(a.host))}${a.geo?.countryCode ? ' · ' + flagEmoji(a.geo.countryCode) : ''}</small></span>
-        <span class="end" style="color:var(--${accLevel(a) === 'muted' ? 'muted' : accLevel(a)})">${esc(accDaysLabel(a, true))}</span>
+        <span class="end" style="color:var(--${accLevel(a) === 'muted' ? 'muted' : accLevel(a)})">${bulk.current === a.id ? '<span class="spinner" style="width:16px;height:16px;border-width:2px"></span>' : esc(accDaysLabel(a, true))}</span>
       </button>`).join('');
   }
   html += `<button class="add-card" onclick="openAddAccount()"><span class="ic">${icon('paste')}</span><span><b>Agregar cuenta</b><small id="clip-hint">${window.IS_TV ? 'Envíala desde tu celular con un código QR' : 'Pega un enlace M3U o ingresa los datos'}</small></span></button>`;
   el.innerHTML = html;
   checkClipboardHint();
 }
+/* ─── Verificación masiva ─── */
+const bulk = { running: false, done: 0, total: 0, current: null, stop: false };
+function alertDays() { return +((S.cfg && S.cfg.alertDays) || 5); }
+// Vencidas o inactivas primero, luego las que vencen antes, al final las ilimitadas y sin verificar.
+function sortByExpiry(list) {
+  const rank = a => {
+    if (!a.status) return [3, 0];
+    if (a.status !== 'Active') return [0, 0];
+    const d = daysLeft(a);
+    if (d === null) return [2, 0];
+    if (d < 0) return [0, d];
+    return [1, d];
+  };
+  return [...list].sort((x, y) => { const a = rank(x), b = rank(y); return a[0] - b[0] || a[1] - b[1] || x.username.localeCompare(y.username); });
+}
+function expirySummary(list) {
+  let expired = 0, soon = 0, ok = 0;
+  for (const a of list) {
+    if (!a.status) continue;
+    const d = daysLeft(a);
+    if (a.status !== 'Active' || (d !== null && d < 0)) expired++;
+    else if (d !== null && d <= alertDays()) soon++;
+    else ok++;
+  }
+  return { expired, soon, ok };
+}
+// Revisa todas las cuentas guardadas, una por una con pausa, para no saturar servidores.
+async function verifyAll() {
+  if (bulk.running) { bulk.stop = true; toast('Deteniendo…'); return; }
+  const list = sortByExpiry(S.accounts);
+  Object.assign(bulk, { running: true, done: 0, total: list.length, stop: false });
+  let ok = 0, fail = 0;
+  for (const a of list) {
+    if (bulk.stop) break;
+    bulk.current = a.id; if (S.tab === 'accounts') renderAccounts();
+    try {
+      const { acc, cats } = await verifyAccount(a);
+      upsertAccount(acc);
+      if (acc.id === S.activeId) S.session = buildSession(accountById(acc.id), cats);
+      ok++;
+    } catch (e) {
+      // Si el servidor no responde se guarda el error, sin borrar los datos anteriores.
+      const cur = accountById(a.id); if (cur) { cur.lastError = e.message; cur.checkedAt = Date.now(); saveAccounts(); }
+      fail++;
+    }
+    bulk.done++;
+    await new Promise(r => setTimeout(r, 400));
+  }
+  Object.assign(bulk, { running: false, current: null });
+  updateAppbar(); if (S.tab === 'accounts') renderAccounts();
+  pushExpiryWatch();
+  const sum = expirySummary(S.accounts);
+  toast(`${ok} verificadas${fail ? ` · ${fail} sin respuesta` : ''}${sum.expired ? ` · ${sum.expired} vencidas` : ''}${sum.soon ? ` · ${sum.soon} por vencer` : ''}`, fail ? 'err' : 'ok');
+}
+function deleteExpired() {
+  const exp = S.accounts.filter(a => a.status && (a.status !== 'Active' || (daysLeft(a) !== null && daysLeft(a) < 0)));
+  if (!exp.length) return;
+  if (!confirm(`¿Eliminar ${exp.length} ${exp.length === 1 ? 'cuenta vencida' : 'cuentas vencidas'}?\n\n${exp.map(a => a.username).join(', ')}`)) return;
+  const ids = new Set(exp.map(a => a.id));
+  S.accounts = S.accounts.filter(a => !ids.has(a.id)); saveAccounts();
+  ids.forEach(id => delete S.favs[id]); saveFavs();
+  if (ids.has(S.activeId)) { S.activeId = null; S.session = null; S.cfg.activeId = null; saveCfg(); if (S.accounts[0]) activateAccount(S.accounts[0].id); }
+  updateAppbar(); renderAccounts(); pushExpiryWatch();
+  toast(`${exp.length} eliminadas`, 'ok');
+}
+
 function copyLink(kind) {
   const acc = activeAccount(); if (!acc) return;
   const l = linksOf(acc);
@@ -503,7 +576,8 @@ function openAddAccount() {
     <div id="add-phone" hidden></div>
     <div id="add-url">
       <div class="field"><label for="m3u-url">Enlace M3U (get.php o /playlist/…/m3u_plus)</label>
-        <textarea class="input" id="m3u-url" rows="3" placeholder="http://servidor:8080/get.php?username=…&password=…">${p ? esc(clip.trim()) : ''}</textarea></div>
+        <textarea class="input" id="m3u-url" rows="3" placeholder="http://servidor:8080/get.php?username=…&password=…">${p ? esc(clip.trim()) : ''}</textarea>
+        <div class="hint" style="margin-top:6px">Puedes pegar varios enlaces, uno por línea, y se verifican todos.</div></div>
       <button class="btn sm" onclick="pasteInto()" style="margin:-4px 0 14px">${icon('paste')}Pegar</button>
     </div>
     <div id="add-manual" hidden>
@@ -582,6 +656,9 @@ function pasteInto() {
 async function addAccountFromSheet() {
   let p;
   if (!$('add-url').hidden) {
+    // Varios enlaces (uno por línea): se verifican todos, uno tras otro.
+    const links = $('m3u-url').value.split(/[\s,]+/).map(x => x.trim()).filter(x => /^https?:\/\//i.test(x));
+    if (links.length > 1) { addManyFromSheet(links); return; }
     p = parseM3UUrl($('m3u-url').value);
     if (!p) { toast('El enlace no tiene usuario y contraseña. Revisa que esté completo.', 'err'); return; }
   } else {
@@ -613,6 +690,32 @@ async function addAccountFromSheet() {
   } finally {
     if ($('btn-verify')) { btn.disabled = false; btn.textContent = 'Verificar cuenta'; }
   }
+}
+
+async function addManyFromSheet(links) {
+  links = [...new Set(links)];
+  const btn = $('btn-verify'); btn.disabled = true; btn.innerHTML = `<span class="spinner"></span>Verificando ${links.length} cuentas…`;
+  const steps = $('verify-steps'); steps.innerHTML = '';
+  let ok = 0;
+  for (const l of links) {
+    const p = parseM3UUrl(l);
+    const row = document.createElement('div');
+    const label = p ? `${p.username} · ${hostLabel(p.host)}` : l.slice(0, 60);
+    row.innerHTML = `<span class="st"><span class="spinner"></span></span>${esc(label)}…`; steps.appendChild(row);
+    if (!p) { row.className = 'err'; row.innerHTML = `<span class="st">${icon('close')}</span>${esc(label)}: sin usuario y contraseña`; continue; }
+    try {
+      const { acc, cats } = await verifyAccount(p);
+      upsertAccount(acc); ok++;
+      if (!S.activeId) await activateAccount(acc.id, cats);
+      row.className = acc.status === 'Active' ? 'ok' : 'err';
+      row.innerHTML = `<span class="st">${icon(acc.status === 'Active' ? 'check' : 'close')}</span>${esc(label)}: ${esc(accDaysLabel(acc))}`;
+    } catch (e) { row.className = 'err'; row.innerHTML = `<span class="st">${icon('close')}</span>${esc(label)}: ${esc(e.message)}`; }
+    await new Promise(r => setTimeout(r, 300));
+  }
+  if ($('btn-verify')) { btn.disabled = false; btn.textContent = 'Verificar cuenta'; }
+  pushExpiryWatch();
+  if (S.tab === 'accounts') renderAccounts();
+  toast(`${ok} de ${links.length} cuentas guardadas`, ok ? 'ok' : 'err');
 }
 
 function openAccountPage(id) {
@@ -1488,6 +1591,12 @@ function openSettings() {
       <div class="list-actions"><button class="btn sm primary" onclick="saveTgConfig()">Guardar</button><button class="btn sm" onclick="testTelegram()">Enviar prueba</button></div>
       <div id="tg-status"></div>
     </div>
+    <div class="set-title">Vencimientos</div>
+    <div class="set-group">
+      <button class="set-row" onclick="S.cfg.alerts=S.cfg.alerts===false;saveCfg();pushExpiryWatch();openSettings()"><span class="n"><b>Avisarme antes de que venza una cuenta</b><small>Notificación del teléfono, aunque la app esté cerrada</small></span><span class="switch${S.cfg.alerts !== false ? ' on' : ''}"></span></button>
+      <div class="set-row"><span class="n"><b>Con cuántos días de anticipación</b><small>También marca en amarillo las que están por vencer</small></span>
+        <select onchange="S.cfg.alertDays=+this.value;saveCfg();pushExpiryWatch();toast('Guardado','ok')">${[1, 3, 5, 7, 10, 15].map(d => `<option value="${d}"${alertDays() === d ? ' selected' : ''}>${d} ${d === 1 ? 'día' : 'días'}</option>`).join('')}</select></div>
+    </div>
     <div class="set-title">Actualizaciones</div>
     <div class="set-group">
       <button class="set-row" onclick="checkUpdate(true)"><span class="n"><b>Buscar actualizaciones</b><small>Versión instalada: ${esc(appVersion())}</small></span>${icon('refresh')}</button>
@@ -1518,6 +1627,18 @@ async function testTelegram() {
 async function clearCache() {
   await idb.clear(); S.lists = {}; S.accLists = {}; S.view = { live: null, vod: null, series: null };
   toast('Catálogos borrados', 'ok');
+}
+
+/* ═══════════════════════════ ALERTAS DE VENCIMIENTO ═══════════════════════════ */
+// El aviso lo da Android aunque la app esté cerrada; aquí solo se le pasan las fechas.
+function pushExpiryWatch() {
+  if (!(window.NativeApp && NativeApp.setExpiryWatch)) return;
+  const list = S.accounts.filter(a => a.status === 'Active' && tsDate(a.expDate)).map(a => ({ id: a.id, name: a.username, server: hostLabel(a.host), exp: +a.expDate }));
+  try { NativeApp.setExpiryWatch(JSON.stringify(list), S.cfg.alerts === false ? 0 : alertDays()); } catch { }
+  if (S.cfg.alerts !== false && list.length && !S.cfg.notifAsked && NativeApp.requestNotifications) {
+    S.cfg.notifAsked = true; saveCfg();
+    try { NativeApp.requestNotifications(); } catch { }
+  }
 }
 
 /* ═══════════════════════════ ACTUALIZACIONES ═══════════════════════════ */
@@ -1596,6 +1717,7 @@ function init() {
   const first = S.accounts.length ? startTab() : 'accounts';
   S.tab = first;
   if (activeId) activateAccount(activeId).then(() => switchTab(first)); else switchTab('accounts');
+  setTimeout(pushExpiryWatch, 2500);
   // Revisar si hay versión nueva (como mucho cada 12 horas).
   if (S.cfg.autoUpdate !== false && Date.now() - (S.cfg.lastUpdateCheck || 0) > 12 * 3600e3) setTimeout(() => checkUpdate(false), 4000);
 }
