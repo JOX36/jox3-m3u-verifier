@@ -75,6 +75,11 @@ import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.media3.cast.CastPlayer
+import androidx.media3.cast.SessionAvailabilityListener
+import androidx.mediarouter.app.MediaRouteButton
+import com.google.android.gms.cast.framework.CastButtonFactory
+import com.google.android.gms.cast.framework.CastContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -185,6 +190,13 @@ class PlayerActivity : AppCompatActivity() {
     private var epgNow: EpgEntry? = null
     private var epgNext: EpgEntry? = null
     private var pipReceiverRegistered = false
+    // Chromecast
+    private var castContext: CastContext? = null
+    private var castPlayer: CastPlayer? = null
+    private var casting = false
+    /** El reproductor que manda en este momento: el del teléfono o el del Chromecast. */
+    private val ap: Player get() = if (casting) castPlayer ?: player else player
+    private var stoppedAt = 0L
 
     private val ui = Handler(Looper.getMainLooper())
     private var netExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -306,8 +318,10 @@ class PlayerActivity : AppCompatActivity() {
             .getInt(KEY_RESIZE, RESIZE_SMART)
         setupEdgeToEdge()
         parsePayload(readPayload(intent))
+        castContext = CastSupport.context(this)
         buildUi()
         initPlayer()
+        initCast()
         setupGestures()
         setupBackHandling()
         registerPipReceiver()
@@ -328,13 +342,24 @@ class PlayerActivity : AppCompatActivity() {
         hideSystemBars()
         ui.removeCallbacks(tickRunnable)
         ui.post(tickRunnable)
-        if (resumeOnStart) { player.play(); resumeOnStart = false }
+        val away = if (stoppedAt > 0) System.currentTimeMillis() - stoppedAt else 0L
+        stoppedAt = 0L
+        if (casting) { resumeOnStart = false; return }
+        if (isLive && away > 3000) {
+            // Volviendo a la app: en vivo se retoma desde lo que están pasando ahora.
+            if (resumeOnStart) refreshStream(silent = true)
+            resumeOnStart = false
+            current?.let { fetchEpg(it) }
+        } else if (resumeOnStart) { player.play(); resumeOnStart = false }
     }
 
     override fun onStop() {
         saveResumePosition()
+        stoppedAt = System.currentTimeMillis()
+        if (casting) { super.onStop(); ui.removeCallbacks(tickRunnable); return }   // sigue sonando en el TV
         resumeOnStart = player.playWhenReady && player.playbackState != Player.STATE_ENDED
-        player.pause()
+        // En vivo se suelta la conexión (libera una de las conexiones de la cuenta).
+        if (isLive) player.stop() else player.pause()
         ui.removeCallbacks(tickRunnable)
         super.onStop()
     }
@@ -343,6 +368,8 @@ class PlayerActivity : AppCompatActivity() {
         ui.removeCallbacksAndMessages(null)
         saveResumePosition()
         player.release()
+        castPlayer?.setSessionAvailabilityListener(null)
+        castPlayer?.release()
         netExecutor.shutdownNow()
         if (pipReceiverRegistered) {
             try { unregisterReceiver(pipReceiver) } catch (e: Exception) { }
@@ -550,6 +577,13 @@ class PlayerActivity : AppCompatActivity() {
             .setUri(item.url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(item.name).build())
             .build()
+        if (casting) {
+            player.stop()
+            castLoad(item, if (item.isLive) C.TIME_UNSET else start)
+            if (item.isLive && item.streamId.isNotEmpty() && apiUrl.isNotEmpty()) fetchEpg(item)
+            showControls()
+            return
+        }
         // Pistas elegidas para el canal anterior no aplican al nuevo.
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().clearOverrides().build()
         player.setMediaItem(mediaItem, start)
@@ -618,6 +652,79 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
+    /** Recargar: en vivo salta a lo que están pasando ahora; en películas sigue en el mismo punto. */
+    private fun refreshStream(silent: Boolean = false) {
+        hideMessage(); retryCount = 0
+        if (casting) { current?.let { castLoad(it, if (isLive) C.TIME_UNSET else ap.currentPosition) }; return }
+        val pos = player.currentPosition
+        if (player.currentMediaItem == null) { loadCurrent(); return }
+        if (isLive) player.seekToDefaultPosition() else player.seekTo(pos)
+        player.prepare()
+        player.playWhenReady = true
+        if (!silent) showOsd(if (isLive) "Recargando en vivo" else "Recargando")
+        current?.let { if (it.isLive) fetchEpg(it) }
+    }
+
+    // ═══ CHROMECAST ═══
+    private fun initCast() {
+        val ctx = castContext ?: return
+        try {
+            val cp = CastPlayer(ctx)
+            cp.addListener(object : Player.Listener {
+                override fun onIsPlayingChanged(isPlaying: Boolean) { if (casting) updatePlayIcon() }
+                override fun onPlaybackStateChanged(state: Int) { if (casting) { updatePlayIcon(); updateProgress() } }
+                override fun onPlayerError(error: PlaybackException) {
+                    if (casting) showMessage("El Chromecast no pudo reproducirlo", "Algunos formatos (como MKV) o servidores no funcionan en Chromecast. Prueba con otro contenido.", "Ver en el teléfono", { castContext?.sessionManager?.endCurrentSession(true) })
+                }
+            })
+            cp.setSessionAvailabilityListener(object : SessionAvailabilityListener {
+                override fun onCastSessionAvailable() { startCasting() }
+                override fun onCastSessionUnavailable() { stopCasting() }
+            })
+            castPlayer = cp
+            if (cp.isCastSessionAvailable) ui.post { startCasting() }
+        } catch (e: Throwable) { castPlayer = null }
+    }
+
+    private fun castDeviceName(): String =
+        try { castContext?.sessionManager?.currentCastSession?.castDevice?.friendlyName } catch (e: Exception) { null } ?: "el TV"
+
+    private fun castLoad(item: PlaylistItem, startMs: Long) {
+        val cp = castPlayer ?: return
+        cp.setMediaItem(CastSupport.item(item), startMs)
+        cp.prepare()
+        cp.playWhenReady = true
+        showCastMessage()
+    }
+
+    private fun startCasting() {
+        val item = current ?: return
+        if (casting) return
+        val pos = if (item.isLive) C.TIME_UNSET else player.currentPosition
+        casting = true
+        player.pause()
+        playerView.keepScreenOn = false
+        castLoad(item, pos)
+        updatePlayIcon()
+        showControls()
+    }
+
+    private fun stopCasting() {
+        if (!casting) return
+        val pos = castPlayer?.currentPosition ?: 0L
+        casting = false
+        hideMessage()
+        if (isLive) player.seekToDefaultPosition() else if (pos > 0) player.seekTo(pos)
+        player.prepare()
+        player.play()
+        showOsd("Reproduciendo en este equipo")
+        updatePlayIcon()
+    }
+
+    private fun showCastMessage() {
+        showMessage("Transmitiendo a ${castDeviceName()}", current?.name ?: "", "Detener transmisión", { castContext?.sessionManager?.endCurrentSession(true) })
+    }
+
     private fun manualRetry() {
         hideMessage()
         retryCount = 0
@@ -656,23 +763,27 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun togglePlay() {
-        if (player.playbackState == Player.STATE_ENDED) { player.seekTo(0); player.play(); return }
-        if (player.playerError != null) { manualRetry(); return }
-        if (player.playWhenReady) player.pause() else player.play()
+        val p = ap
+        if (p.playbackState == Player.STATE_ENDED) { p.seekTo(0); p.play(); return }
+        if (!casting && player.playerError != null) { manualRetry(); return }
+        if (p.playWhenReady) p.pause() else p.play()
+        if (casting) updatePlayIcon()
     }
 
     private fun updatePlayIcon() {
-        val showPause = player.playWhenReady && player.playbackState != Player.STATE_ENDED
+        val p = ap
+        val showPause = p.playWhenReady && p.playbackState != Player.STATE_ENDED
         btnPlay.setImageResource(if (showPause) R.drawable.ic_pause else R.drawable.ic_play)
         btnPlay.contentDescription = if (showPause) "Pausar" else "Reproducir"
     }
 
     private fun seekBy(deltaMs: Long) {
         if (isLive) return
-        val dur = player.duration
-        var target = player.currentPosition + deltaMs
+        val p = ap
+        val dur = p.duration
+        var target = p.currentPosition + deltaMs
         if (dur != C.TIME_UNSET && dur > 0) target = target.coerceAtMost((dur - 1000).coerceAtLeast(0))
-        player.seekTo(target.coerceAtLeast(0))
+        p.seekTo(target.coerceAtLeast(0))
         showOsd(if (deltaMs > 0) "+${deltaMs / 1000} s" else "−${-deltaMs / 1000} s")
         updateProgress()
     }
@@ -860,6 +971,19 @@ class PlayerActivity : AppCompatActivity() {
             setTypeface(typeface, Typeface.BOLD)
         }
         row.addView(clockView, LinearLayout.LayoutParams(wrap(), wrap()).apply { marginEnd = dp(10) })
+        castContext?.let { ctx ->
+            try {
+                val b = MediaRouteButton(this)
+                CastButtonFactory.setUpMediaRouteButton(applicationContext, b)
+                b.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(buttonBg) }
+                b.setPadding(dp(4), dp(4), dp(4), dp(4))
+                b.contentDescription = "Transmitir a Chromecast"
+                // Solo aparece cuando hay un Chromecast o TV compatible en la red.
+                row.addView(b, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(8) })
+            } catch (e: Exception) { }
+        }
+        row.addView(circleButton(R.drawable.ic_reload, 44, 11, buttonBg, "Recargar") { refreshStream() })
+        row.addView(spacer(8))
         row.addView(circleButton(R.drawable.ic_add, 44, 11, buttonBg, "Añadir a Mi Lista") { addToList() })
         row.addView(spacer(8))
         // Bloquear la pantalla solo tiene sentido en pantallas táctiles.
@@ -892,13 +1016,13 @@ class PlayerActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        btnPrev = circleButton(R.drawable.ic_prev, 52, 13, buttonBg, "Anterior") { prev() }
-        btnRewind = circleButton(R.drawable.ic_rewind, 52, 13, buttonBg, "Retroceder 10 segundos") { seekBy(-SEEK_STEP_MS) }
-        btnPlay = circleButton(R.drawable.ic_pause, 76, 20, accent, "Pausar") { togglePlay() }
-        btnForward = circleButton(R.drawable.ic_forward, 52, 13, buttonBg, "Adelantar 10 segundos") { seekBy(SEEK_STEP_MS) }
-        btnNext = circleButton(R.drawable.ic_next, 52, 13, buttonBg, "Siguiente") { next() }
+        btnPrev = circleButton(R.drawable.ic_prev, 46, 12, buttonBg, "Anterior") { prev() }
+        btnRewind = circleButton(R.drawable.ic_rewind, 46, 12, buttonBg, "Retroceder 10 segundos") { seekBy(-SEEK_STEP_MS) }
+        btnPlay = circleButton(R.drawable.ic_pause, 58, 15, accent, "Pausar") { togglePlay() }
+        btnForward = circleButton(R.drawable.ic_forward, 46, 12, buttonBg, "Adelantar 10 segundos") { seekBy(SEEK_STEP_MS) }
+        btnNext = circleButton(R.drawable.ic_next, 46, 12, buttonBg, "Siguiente") { next() }
         listOf(btnPrev, btnRewind, btnPlay, btnForward, btnNext).forEach { b ->
-            centerRow.addView(b, (b.layoutParams as LinearLayout.LayoutParams).apply { marginStart = dp(14); marginEnd = dp(14) })
+            centerRow.addView(b, (b.layoutParams as LinearLayout.LayoutParams).apply { marginStart = dp(12); marginEnd = dp(12) })
         }
         controls.addView(centerRow, FrameLayout.LayoutParams(wrap(), wrap(), Gravity.CENTER))
     }
@@ -937,8 +1061,8 @@ class PlayerActivity : AppCompatActivity() {
                 }
                 override fun onStopTrackingTouch(sb: SeekBar?) {
                     userSeeking = false
-                    val dur = player.duration
-                    if (dur != C.TIME_UNSET && dur > 0 && sb != null) player.seekTo(dur * sb.progress / 1000)
+                    val dur = ap.duration
+                    if (dur != C.TIME_UNSET && dur > 0 && sb != null) ap.seekTo(dur * sb.progress / 1000)
                     scheduleHideControls()
                 }
             })
@@ -1124,8 +1248,8 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun updateProgress() {
         if (isLive || userSeeking) return
-        val dur = player.duration
-        val pos = player.currentPosition
+        val dur = ap.duration
+        val pos = ap.currentPosition
         if (dur == C.TIME_UNSET || dur <= 0) {
             seekBar.progress = 0
             seekBar.secondaryProgress = 0
@@ -1134,7 +1258,7 @@ class PlayerActivity : AppCompatActivity() {
             return
         }
         seekBar.progress = (pos * 1000 / dur).toInt()
-        seekBar.secondaryProgress = (player.bufferedPosition * 1000 / dur).toInt()
+        seekBar.secondaryProgress = (ap.bufferedPosition * 1000 / dur).toInt()
         posView.text = formatTime(pos)
         durView.text = formatTime(dur)
     }
