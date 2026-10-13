@@ -6,8 +6,8 @@
    Se activa sola en TV; en el teléfono no cambia nada.
    ════════════════════════════════════════════════════════════════ */
 (function () {
-  let tv = false;
-  try { tv = !!(window.NativeApp && NativeApp.isTv && NativeApp.isTv()); } catch { }
+  let tv = !!window.IS_TV;
+  try { tv = tv || !!(window.NativeApp && NativeApp.isTv && NativeApp.isTv()); } catch { }
   if (/[?&]tv=1\b/.test(location.search)) tv = true;
   window.IS_TV = tv;
 

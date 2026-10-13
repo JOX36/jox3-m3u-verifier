@@ -5,6 +5,8 @@
    ════════════════════════════════════════════════════════════════ */
 
 const VERSION = '3.0';
+// TV box / Android TV (se maneja con control remoto). tv.js usa el mismo valor.
+window.IS_TV = (() => { try { return !!(window.NativeApp && NativeApp.isTv && NativeApp.isTv()); } catch { return false; } })() || /[?&]tv=1\b/.test(location.search);
 function appVersion() { try { if (window.NativeApp && NativeApp.appVersion) return NativeApp.appVersion() || VERSION; } catch { } return VERSION; }
 const TYPES = {
   live:   { label: 'En vivo',   cat: 'get_live_categories',   streams: 'get_live_streams', listCat: 'TV en Vivo' },
@@ -384,7 +386,7 @@ function showPage(id) {
 }
 function closeTop() {
   const top = S.stack.pop(); if (!top) return false;
-  if (top.kind === 'sheet') { $('sheet').classList.remove('show'); $('scrim').classList.remove('show'); }
+  if (top.kind === 'sheet') { $('sheet').classList.remove('show'); $('scrim').classList.remove('show'); stopRemoteAdd(); }
   else { $(top.id).classList.remove('show'); if (top.id === 'page-detail') S.detail = null; }
   return true;
 }
@@ -407,7 +409,7 @@ function meterHtml(acc) {
 function renderAccounts() {
   const el = $('accounts-body'), acc = activeAccount();
   if (!S.accounts.length) {
-    el.innerHTML = emptyState('tv', 'Agrega tu primera cuenta', 'Pega un enlace M3U o los datos de tu cuenta Xtream para verificarla y ver su contenido.',
+    el.innerHTML = emptyState('tv', 'Agrega tu primera cuenta', window.IS_TV ? 'Envía el enlace M3U desde tu celular escaneando un código QR, o escríbelo con el control.' : 'Pega un enlace M3U o los datos de tu cuenta Xtream para verificarla y ver su contenido.',
       `<button class="btn primary" onclick="openAddAccount()">${icon('plus')}Agregar cuenta</button>`);
     return;
   }
@@ -445,7 +447,7 @@ function renderAccounts() {
         <span class="end" style="color:var(--${accLevel(a) === 'muted' ? 'muted' : accLevel(a)})">${esc(accDaysLabel(a, true))}</span>
       </button>`).join('');
   }
-  html += `<button class="add-card" onclick="openAddAccount()"><span class="ic">${icon('paste')}</span><span><b>Agregar cuenta</b><small id="clip-hint">Pega un enlace M3U o ingresa los datos</small></span></button>`;
+  html += `<button class="add-card" onclick="openAddAccount()"><span class="ic">${icon('paste')}</span><span><b>Agregar cuenta</b><small id="clip-hint">${window.IS_TV ? 'Envíala desde tu celular con un código QR' : 'Pega un enlace M3U o ingresa los datos'}</small></span></button>`;
   el.innerHTML = html;
   checkClipboardHint();
 }
@@ -497,7 +499,8 @@ function openAccountSwitcher() {
 function openAddAccount() {
   const clip = readClipboard(), p = parseM3UUrl(clip);
   showSheet('Agregar cuenta', `
-    <div class="seg" id="add-mode"><button class="on" onclick="setAddMode('url')">Enlace M3U</button><button onclick="setAddMode('manual')">Datos de la cuenta</button></div>
+    <div class="seg" id="add-mode">${hasRemote() ? `<button data-m="phone" onclick="setAddMode('phone')">Desde el celular</button>` : ''}<button data-m="url" onclick="setAddMode('url')">Enlace M3U</button><button data-m="manual" onclick="setAddMode('manual')">Datos</button></div>
+    <div id="add-phone" hidden></div>
     <div id="add-url">
       <div class="field"><label for="m3u-url">Enlace M3U (get.php o /playlist/…/m3u_plus)</label>
         <textarea class="input" id="m3u-url" rows="3" placeholder="http://servidor:8080/get.php?username=…&password=…">${p ? esc(clip.trim()) : ''}</textarea></div>
@@ -510,10 +513,65 @@ function openAddAccount() {
     </div>
     <button class="btn primary block" id="btn-verify" onclick="addAccountFromSheet()">Verificar cuenta</button>
     <div class="steps" id="verify-steps"></div>`);
+  setAddMode(window.IS_TV && hasRemote() && !p ? 'phone' : 'url');
 }
+function hasRemote() { return !!(window.NativeApp && NativeApp.startRemoteAdd); }
 function setAddMode(m) {
-  $('add-url').hidden = m !== 'url'; $('add-manual').hidden = m !== 'manual';
-  [...$('add-mode').children].forEach((b, i) => b.classList.toggle('on', (i === 0) === (m === 'url')));
+  $('add-url').hidden = m !== 'url'; $('add-manual').hidden = m !== 'manual'; $('add-phone').hidden = m !== 'phone';
+  $('btn-verify').hidden = m === 'phone';
+  [...$('add-mode').children].forEach(b => b.classList.toggle('on', b.dataset.m === m));
+  if (m === 'phone') startRemoteAdd(); else stopRemoteAdd();
+}
+
+/* ─── Agregar desde el celular: QR con un mini servidor en la red local ─── */
+function startRemoteAdd() {
+  const box = $('add-phone'); if (!box) return;
+  let r = {};
+  try { r = JSON.parse(NativeApp.startRemoteAdd() || '{}'); } catch { r = { error: 'No se pudo iniciar' }; }
+  if (r.error) { box.innerHTML = `<div class="hint" style="color:var(--warn);margin-bottom:12px">${esc(r.error)}</div>`; return; }
+  S.remoteActive = true;
+  box.innerHTML = `<div class="remote">
+      ${r.qr ? `<img class="qr" src="data:image/png;base64,${r.qr}" alt="Código QR">` : ''}
+      <div class="remote-txt"><b>Escanea con la cámara del celular</b>
+        <p>El celular debe estar en la misma red WiFi. Se abre una página donde pegas uno o varios enlaces M3U y llegan aquí solos.</p>
+        <small>O escribe en el navegador del celular:</small><code>${esc(r.url)}</code></div>
+    </div><div class="steps" id="remote-steps"></div>`;
+}
+function stopRemoteAdd() {
+  if (!S.remoteActive) return;
+  S.remoteActive = false;
+  try { NativeApp.stopRemoteAdd(); } catch { }
+}
+let remoteQueue = Promise.resolve();
+window.onRemoteAdd = function (json) {
+  let items = []; try { items = JSON.parse(json); } catch { return; }
+  toast(`Recibido del celular: ${items.length} ${items.length === 1 ? 'cuenta' : 'cuentas'}`, 'ok');
+  items.forEach(it => { remoteQueue = remoteQueue.then(() => addRemoteItem(it)); });
+};
+async function addRemoteItem(it) {
+  let p = null;
+  if (it.type === 'url') p = parseM3UUrl(it.url);
+  else {
+    let host = String(it.host || '').trim().replace(/\/+$/, '');
+    if (host && !/^https?:\/\//i.test(host)) host = 'http://' + host;
+    try { p = { host: new URL(host).origin, username: it.user, password: it.pass }; } catch { p = null; }
+  }
+  const steps = $('remote-steps');
+  const row = document.createElement('div');
+  const label = p ? `${p.username} · ${hostLabel(p.host)}` : String(it.url || it.host || 'Enlace');
+  row.innerHTML = `<span class="st"><span class="spinner"></span></span>Verificando ${esc(label)}…`;
+  if (steps) steps.prepend(row);
+  if (!p) { row.className = 'err'; row.innerHTML = `<span class="st">${icon('close')}</span>${esc(label)}: el enlace no tiene usuario y contraseña`; return; }
+  try {
+    const { acc, cats } = await verifyAccount(p);
+    upsertAccount(acc);
+    if (!S.activeId) await activateAccount(acc.id, cats);
+    row.className = acc.status === 'Active' ? 'ok' : 'err';
+    row.innerHTML = `<span class="st">${icon(acc.status === 'Active' ? 'check' : 'close')}</span>${esc(label)}: ${esc(accDaysLabel(acc))}`;
+    if (S.tab === 'accounts') renderAccounts();
+  } catch (e) {
+    row.className = 'err'; row.innerHTML = `<span class="st">${icon('close')}</span>${esc(label)}: ${esc(e.message)}`;
+  }
 }
 function pasteInto() {
   const clip = readClipboard();
@@ -1430,6 +1488,11 @@ function openSettings() {
       <div class="list-actions"><button class="btn sm primary" onclick="saveTgConfig()">Guardar</button><button class="btn sm" onclick="testTelegram()">Enviar prueba</button></div>
       <div id="tg-status"></div>
     </div>
+    <div class="set-title">Actualizaciones</div>
+    <div class="set-group">
+      <button class="set-row" onclick="checkUpdate(true)"><span class="n"><b>Buscar actualizaciones</b><small>Versión instalada: ${esc(appVersion())}</small></span>${icon('refresh')}</button>
+      <button class="set-row" onclick="S.cfg.autoUpdate=S.cfg.autoUpdate===false;saveCfg();openSettings()"><span class="n"><b>Avisarme de versiones nuevas</b><small>Revisa GitHub al abrir la app</small></span><span class="switch${S.cfg.autoUpdate !== false ? ' on' : ''}"></span></button>
+    </div>
     <div class="set-title">Datos</div>
     <div class="set-group">
       <button class="set-row" onclick="clearCache()"><span class="n"><b>Borrar catálogos guardados</b><small>Se vuelven a descargar la próxima vez</small></span>${icon('refresh')}</button>
@@ -1457,6 +1520,56 @@ async function clearCache() {
   toast('Catálogos borrados', 'ok');
 }
 
+/* ═══════════════════════════ ACTUALIZACIONES ═══════════════════════════ */
+const REPO = 'JOX36/jox3-m3u-verifier';
+function buildNum(v) { const m = String(v || '').match(/(\d+)\.(\d+)\.(\d+)/); return m ? +m[3] : 0; }
+async function checkUpdate(manual) {
+  if (manual) toast('Buscando actualizaciones…');
+  try {
+    const rel = await apiGet(`https://api.github.com/repos/${REPO}/releases/latest`, 15000, { noBrake: true });
+    const ver = String(rel.tag_name || '').replace(/^v/i, '');
+    const apk = (rel.assets || []).find(a => /\.apk$/i.test(a.name));
+    S.cfg.lastUpdateCheck = Date.now(); saveCfg();
+    if (!apk || buildNum(ver) <= buildNum(appVersion())) { if (manual) toast(`Tienes la última versión (${appVersion()})`, 'ok'); return; }
+    if (!manual && S.cfg.skipVersion === ver) return;
+    S.update = { ver, url: apk.browser_download_url, notes: rel.body || '', size: apk.size };
+    showUpdateWhenFree(manual);
+  } catch (e) {
+    if (manual) toast(e.status === 404 ? 'Aún no hay versiones publicadas' : `No se pudo revisar: ${e.message}`, 'err');
+  }
+}
+// El aviso no debe tapar lo que el usuario está haciendo: espera a que no haya nada abierto.
+function showUpdateWhenFree(now) {
+  if (now || !S.stack.length) { showUpdateSheet(); return; }
+  setTimeout(() => showUpdateWhenFree(false), 20000);
+}
+function showUpdateSheet() {
+  const u = S.update; if (!u) return;
+  const notes = u.notes.replace(/\r/g, '').split('\n').map(l => l.replace(/^[-*]\s*/, '').trim()).filter(l => l && !/^#|generated with|claude\.ai|^merge pull request|co-authored-by|claude-session/i.test(l)).slice(0, 8);
+  showSheet(`Versión ${u.ver} disponible`, `
+    <div class="hint" style="margin:-4px 0 10px">Tienes la ${esc(appVersion())}${u.size ? ` · descarga de ${(u.size / 1048576).toFixed(1)} MB` : ''}. Se instala encima, sin perder tus cuentas ni tu lista.</div>
+    ${notes.length ? `<ul class="notes">${notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+    <div id="upd-progress" hidden><div class="upd-bar"><i id="upd-bar" style="width:0"></i></div><div class="hint" id="upd-txt">Descargando…</div></div>
+    <div class="list-actions" style="margin-top:14px" id="upd-actions">
+      <button class="btn primary" onclick="startUpdate()">${icon('save')}Actualizar ahora</button>
+      <button class="btn" onclick="S.cfg.skipVersion=${jsArg(u.ver)};saveCfg();closeTop()">Más tarde</button>
+    </div>`);
+}
+function startUpdate() {
+  const u = S.update; if (!u) return;
+  if (!(window.NativeApp && NativeApp.downloadUpdate)) { window.open(u.url, '_blank'); return; }
+  $('upd-progress').hidden = false; $('upd-actions').hidden = true;
+  NativeApp.downloadUpdate(u.url, u.ver);
+}
+window.onUpdateProgress = function (pct) {
+  const bar = $('upd-bar'), txt = $('upd-txt'); if (!bar) return;
+  if (pct >= 0) { bar.style.width = pct + '%'; txt.textContent = pct >= 100 ? 'Abriendo el instalador…' : `Descargando… ${pct}%`; }
+};
+window.onUpdateError = function (msg) {
+  toast(`No se pudo descargar la actualización: ${msg}`, 'err');
+  if ($('upd-actions')) { $('upd-actions').hidden = false; $('upd-progress').hidden = true; }
+};
+
 /* ═══════════════════════════ INICIO ═══════════════════════════ */
 function migrate() {
   // Historial de la versión anterior → cuentas guardadas.
@@ -1483,6 +1596,8 @@ function init() {
   const first = S.accounts.length ? startTab() : 'accounts';
   S.tab = first;
   if (activeId) activateAccount(activeId).then(() => switchTab(first)); else switchTab('accounts');
+  // Revisar si hay versión nueva (como mucho cada 12 horas).
+  if (S.cfg.autoUpdate !== false && Date.now() - (S.cfg.lastUpdateCheck || 0) > 12 * 3600e3) setTimeout(() => checkUpdate(false), 4000);
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;

@@ -3,7 +3,10 @@ package com.jox3.m3uverifier
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import androidx.core.content.FileProvider
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -33,6 +36,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private var pageLoaded = false
+    private var remoteServer: RemoteAddServer? = null
+    private var pendingApk: File? = null
 
     // Pool de hilos para verificar canales en paralelo sin bloquear la UI.
     // Se recrea al cambiar de categoría para no seguir revisando la anterior.
@@ -108,6 +113,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Volviendo de "permitir instalar apps": continuar con la actualización.
+        pendingApk?.let { f ->
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()) installApk(f)
+        }
         if (pageLoaded) deliverPendingAdds()
     }
 
@@ -233,6 +242,62 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun isTv(): Boolean = isTvDevice(this@MainActivity)
 
+        /** Inicia "Agregar desde el celular": devuelve {url, qr} o {error}. */
+        @JavascriptInterface
+        fun startRemoteAdd(): String {
+            remoteServer?.stop()
+            val srv = RemoteAddServer { items ->
+                runOnUiThread {
+                    webView.evaluateJavascript("window.onRemoteAdd && window.onRemoteAdd(${JSONObject.quote(items.toString())});", null)
+                }
+            }
+            val url = try { srv.start() } catch (e: Exception) { "" }
+            if (url.isEmpty()) return JSONObject().put("error", "No hay red WiFi o cableada. Conecta el equipo a la misma red que el celular.").toString()
+            remoteServer = srv
+            val qr = try { RemoteAddServer.qrPngBase64(url) } catch (e: Exception) { "" }
+            return JSONObject().put("url", url).put("qr", qr).toString()
+        }
+
+        @JavascriptInterface
+        fun stopRemoteAdd() { remoteServer?.stop(); remoteServer = null }
+
+        /** Descarga el APK de una versión nueva y abre el instalador de Android. */
+        @JavascriptInterface
+        fun downloadUpdate(apkUrl: String, version: String) {
+            Thread {
+                try {
+                    val dir = File(cacheDir, "updates").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+                    val file = File(dir, "jox3-$version.apk")
+                    var conn = URL(apkUrl).openConnection() as HttpURLConnection
+                    conn.instanceFollowRedirects = true
+                    conn.connectTimeout = 15000; conn.readTimeout = 30000
+                    // GitHub redirige a otro dominio https; seguir hasta 5 saltos.
+                    var hops = 0
+                    while (conn.responseCode in 300..399 && hops < 5) {
+                        val next = conn.getHeaderField("Location"); conn.disconnect()
+                        conn = URL(URL(apkUrl), next).openConnection() as HttpURLConnection
+                        conn.connectTimeout = 15000; conn.readTimeout = 30000; hops++
+                    }
+                    if (conn.responseCode !in 200..299) throw Exception("HTTP ${conn.responseCode}")
+                    val total = conn.contentLengthLong
+                    var done = 0L; var lastPct = -1
+                    conn.inputStream.use { input -> file.outputStream().use { out ->
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            val r = input.read(buf); if (r < 0) break
+                            out.write(buf, 0, r); done += r
+                            val pct = if (total > 0) (done * 100 / total).toInt() else -1
+                            if (pct != lastPct) { lastPct = pct; runOnUiThread { webView.evaluateJavascript("window.onUpdateProgress && window.onUpdateProgress($pct);", null) } }
+                        }
+                    } }
+                    conn.disconnect()
+                    runOnUiThread { installApk(file) }
+                } catch (e: Exception) {
+                    runOnUiThread { webView.evaluateJavascript("window.onUpdateError && window.onUpdateError(${JSONObject.quote(e.message ?: "error")});", null) }
+                }
+            }.start()
+        }
+
         @JavascriptInterface
         fun appVersion(): String = try {
             packageManager.getPackageInfo(packageName, 0).versionName ?: ""
@@ -273,7 +338,27 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    /** Abre el instalador de Android con el APK descargado (pide permiso la primera vez). */
+    private fun installApk(file: File) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            pendingApk = file
+            notifyJs("Permite instalar apps de JOX3 y vuelve atrás para continuar", "info")
+            try {
+                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            } catch (e: Exception) { notifyJs("Activa 'Instalar apps desconocidas' para JOX3 en los ajustes", "err") }
+            return
+        }
+        pendingApk = null
+        val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try { startActivity(intent) } catch (e: Exception) { notifyJs("No se pudo abrir el instalador", "err") }
+    }
+
     override fun onDestroy() {
+        remoteServer?.stop()
         checkExecutor.shutdownNow()
         super.onDestroy()
     }

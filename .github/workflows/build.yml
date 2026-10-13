@@ -6,16 +6,19 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write   # para publicar la versión (Release) con el APK
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -48,3 +51,19 @@ jobs:
         with:
           name: JOX3-Verifier-APK
           path: app/build/outputs/apk/release/app-release.apk
+
+      # Cada cambio que llega a main se publica como versión: la app la detecta
+      # y ofrece instalarla sola (también en el TV box).
+      - name: Publish release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.SIGNING_KEYSTORE_PATH != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          VERSION="2.0.${{ github.run_number }}"
+          cp app/build/outputs/apk/release/app-release.apk "JOX3-Verifier-$VERSION.apk"
+          NOTES=$(printf '%s\n' "$HEAD_MSG" | grep -viE '^(merge pull request|co-authored-by|claude-session)' | sed '/^\s*$/d')
+          gh release create "v$VERSION" "JOX3-Verifier-$VERSION.apk" \
+            --title "JOX3 Verifier $VERSION" \
+            --notes "${NOTES:-Mejoras y correcciones.}" \
+            --target "${{ github.sha }}"
