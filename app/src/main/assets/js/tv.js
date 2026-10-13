@@ -109,7 +109,7 @@
       if (sc) sc.scrollBy({ top: dir === 'down' ? 240 : -240 });
     }
   }
-  function zone(el) { return el.closest('.grid, .nav, .chips, .seasons, .appbar, .sh-body, .scroll, .page') || document.body; }
+  function zone(el) { return el.closest('.grid, .cgrid, .rail, .hero-card, .hacc, .nav, .chips, .seasons, .appbar, .sh-body, .scroll, .page') || document.body; }
   function overlap(a1, a2, b1, b2) {
     // 0 si se cruzan en el eje perpendicular; si no, la distancia entre ellos.
     if (b2 < a1) return a1 - b2;

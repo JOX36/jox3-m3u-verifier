@@ -13,7 +13,7 @@ const TYPES = {
   vod:    { label: 'Películas', cat: 'get_vod_categories',    streams: 'get_vod_streams',  listCat: 'Películas' },
   series: { label: 'Series',    cat: 'get_series_categories', streams: 'get_series',       listCat: 'Series' },
 };
-const TAB_TITLES = { accounts: 'Cuentas', live: 'En vivo', vod: 'Películas', series: 'Series', mylist: 'Mi lista' };
+const TAB_TITLES = { home: 'Inicio', live: 'En vivo', vod: 'Películas', series: 'Series', mylist: 'Mi lista' };
 const SKINS = [
   { id: 'default', name: 'Cian', c: '#00D4FF' },
   { id: 'magenta', name: 'Violeta', c: '#C84BFF' },
@@ -28,7 +28,7 @@ const TTL_STREAMS = 6 * 3600e3;
 const TTL_CATS = 3600e3;
 
 const S = {
-  tab: 'accounts',
+  tab: 'home',
   accounts: [],
   activeId: null,
   session: null,            // cuenta activa con categorías cargadas (compatible con la versión anterior)
@@ -134,6 +134,9 @@ function emptyState(ic, title, text, btn) {
   return `<div class="empty"><div class="ic">${icon(ic)}</div><b>${esc(title)}</b><p>${esc(text)}</p>${btn || ''}</div>`;
 }
 const loadingHtml = (t = 'Cargando…') => `<div class="loading"><span class="spinner"></span>${esc(t)}</div>`;
+// Siluetas mientras carga: se ve la forma de lo que viene, en lugar de un círculo girando.
+const skelGrid = (n = 12) => `<div class="grid">${'<div class="po skel"></div>'.repeat(n)}</div>`;
+const skelList = (n = 9) => `<div>${Array.from({ length: n }, () => `<div class="ch sk-row"><span class="num"></span><span class="logo skel"></span><span class="n"><b class="skel sk-l"></b><small class="skel sk-s"></small></span></div>`).join('')}</div>`;
 
 /* ═══════════════════════════ ALMACENAMIENTO ═══════════════════════════ */
 const store = {
@@ -335,11 +338,14 @@ function deleteAccount(id) {
     S.activeId = null; S.session = null; S.cfg.activeId = null; saveCfg();
     if (S.accounts[0]) activateAccount(S.accounts[0].id);
   }
-  closeAll(); updateAppbar(); renderAll(); toast('Cuenta eliminada');
+  while (S.stack.length && S.stack[S.stack.length - 1].id !== 'page-accounts') closeTop();
+  updateAppbar(); renderAll(); toast('Cuenta eliminada');
 }
 
 /* ═══════════════════════════ NAVEGACIÓN ═══════════════════════════ */
 function switchTab(tab, opts = {}) {
+  if (tab === 'accounts' || !TAB_TITLES[tab]) tab = 'home';
+  if (S.tab !== tab && S.tab === 'home') stopHero();
   S.tab = tab; S.cfg.lastTab = tab; saveCfg();
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === `view-${tab}`));
   document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
@@ -347,25 +353,34 @@ function switchTab(tab, opts = {}) {
   if (tab === 'live') ensureLive(opts.cat);
   if (tab === 'vod' || tab === 'series') ensureGrid(tab, opts.cat);
   if (tab === 'mylist') renderMyList();
-  if (tab === 'accounts') renderAccounts();
+  if (tab === 'home') renderHome();
+}
+// Cuentas: pantalla aparte que se abre desde Inicio o desde el selector de cuenta.
+function accountsOpen() { return S.stack.some(l => l.id === 'page-accounts'); }
+function openAccounts() { renderAccounts(); $('accounts-body').scrollTop = 0; showPage('page-accounts'); }
+function refreshAccountsUI() {
+  if (accountsOpen()) renderAccounts();
+  if (S.tab === 'home') renderHomeAccount();
 }
 
 function updateAppbar() {
-  const onAccounts = S.tab === 'accounts';
-  $('appbar-title').hidden = !onAccounts && !!activeAccount();
+  const onHome = S.tab === 'home';
+  $('brand').hidden = !onHome;
+  $('appbar-title').hidden = onHome || !!activeAccount();
   $('appbar-title').textContent = TAB_TITLES[S.tab];
   const acc = activeAccount(), chip = $('acct-chip');
-  chip.hidden = onAccounts || !acc;
+  chip.hidden = onHome || !acc;
   if (acc) {
     $('acct-chip-name').textContent = acc.username;
     $('acct-chip-days').textContent = accDaysLabel(acc, true);
     $('acct-chip-dot').className = `dot ${accLevel(acc)}`;
   }
-  if (!onAccounts && !acc) $('appbar-title').hidden = false;
+  if (!onHome && !acc) $('appbar-title').hidden = false;
 }
 
 function renderAll() {
-  if (S.tab === 'accounts') renderAccounts();
+  if (S.tab === 'home') renderHome();
+  if (accountsOpen()) renderAccounts();
   if (S.tab === 'live') ensureLive();
   if (S.tab === 'vod' || S.tab === 'series') ensureGrid(S.tab);
   if (S.tab === 'mylist') renderMyList();
@@ -391,7 +406,11 @@ function closeTop() {
   return true;
 }
 function closeAll() { while (S.stack.length) closeTop(); }
-function startTab() { const t = S.cfg.startTab || 'accounts'; return t === 'last' ? (S.cfg.lastTab || 'accounts') : t; }
+function startTab() {
+  let t = S.cfg.startTab || 'home';
+  if (t === 'last') t = S.cfg.lastTab || 'home';
+  return TAB_TITLES[t] ? t : 'home';
+}
 
 window.handleBack = function () {
   if (S.stack.length) { closeTop(); return true; }
@@ -406,8 +425,8 @@ function meterHtml(acc) {
   const filled = acc.status !== 'Active' ? 0 : d === null ? 30 : Math.max(0, Math.min(30, d));
   return `<div class="meter ${lvl === 'on' ? '' : lvl}">${Array.from({ length: 30 }, (_, i) => `<i class="${i < filled ? 'f' : ''}"></i>`).join('')}</div>`;
 }
-function renderAccounts() {
-  const el = $('accounts-body'), acc = activeAccount();
+function renderAccounts(el = $('accounts-body')) {
+  const acc = activeAccount();
   if (!S.accounts.length) {
     el.innerHTML = emptyState('tv', 'Agrega tu primera cuenta', window.IS_TV ? 'Envía el enlace M3U desde tu celular escaneando un código QR, o escríbelo con el control.' : 'Pega un enlace M3U o los datos de tu cuenta Xtream para verificarla y ver su contenido.',
       `<button class="btn primary" onclick="openAddAccount()">${icon('plus')}Agregar cuenta</button>`);
@@ -492,7 +511,7 @@ async function verifyAll() {
   let ok = 0, fail = 0;
   for (const a of list) {
     if (bulk.stop) break;
-    bulk.current = a.id; if (S.tab === 'accounts') renderAccounts();
+    bulk.current = a.id; refreshAccountsUI();
     try {
       const { acc, cats } = await verifyAccount(a);
       upsertAccount(acc);
@@ -507,7 +526,7 @@ async function verifyAll() {
     await new Promise(r => setTimeout(r, 400));
   }
   Object.assign(bulk, { running: false, current: null });
-  updateAppbar(); if (S.tab === 'accounts') renderAccounts();
+  updateAppbar(); refreshAccountsUI();
   pushExpiryWatch();
   const sum = expirySummary(S.accounts);
   toast(`${ok} verificadas${fail ? ` · ${fail} sin respuesta` : ''}${sum.expired ? ` · ${sum.expired} vencidas` : ''}${sum.soon ? ` · ${sum.soon} por vencer` : ''}`, fail ? 'err' : 'ok');
@@ -520,7 +539,7 @@ function deleteExpired() {
   S.accounts = S.accounts.filter(a => !ids.has(a.id)); saveAccounts();
   ids.forEach(id => delete S.favs[id]); saveFavs();
   if (ids.has(S.activeId)) { S.activeId = null; S.session = null; S.cfg.activeId = null; saveCfg(); if (S.accounts[0]) activateAccount(S.accounts[0].id); }
-  updateAppbar(); renderAccounts(); pushExpiryWatch();
+  updateAppbar(); refreshAccountsUI(); pushExpiryWatch();
   toast(`${exp.length} eliminadas`, 'ok');
 }
 
@@ -555,7 +574,7 @@ async function reverify(id) {
     const { acc, cats } = await verifyAccount(a);
     upsertAccount(acc);
     if (id === S.activeId) S.session = buildSession(accountById(id), cats);
-    renderAccounts(); updateAppbar();
+    refreshAccountsUI(); updateAppbar();
     toast(`${a.username}: ${accDaysLabel(accountById(id))}`, 'ok');
   } catch (e) { toast(`${a.username}: ${e.message}`, 'err'); }
 }
@@ -566,7 +585,7 @@ function openAccountSwitcher() {
       <span class="n"><b>${esc(a.username)}</b><small>${esc(hostLabel(a.host))}</small></span>
       <span class="end" style="color:var(--${accLevel(a) === 'muted' ? 'muted' : accLevel(a)})">${a.id === S.activeId ? icon('check') : esc(accDaysLabel(a, true))}</span>
     </button>`).join('');
-  showSheet('Cambiar de cuenta', rows + `<button class="add-card" onclick="closeTop();openAddAccount()"><span class="ic">${icon('plus')}</span><span><b>Agregar cuenta</b><small>Pega un enlace M3U o ingresa los datos</small></span></button>`);
+  showSheet('Cambiar de cuenta', rows + `<button class="menu-item" onclick="closeTop();openAccounts()">${icon('acc')}Administrar cuentas</button><button class="add-card" onclick="closeTop();openAddAccount()"><span class="ic">${icon('plus')}</span><span><b>Agregar cuenta</b><small>Pega un enlace M3U o ingresa los datos</small></span></button>`);
 }
 
 function openAddAccount() {
@@ -642,7 +661,7 @@ async function addRemoteItem(it) {
     if (!S.activeId) await activateAccount(acc.id, cats);
     row.className = acc.status === 'Active' ? 'ok' : 'err';
     row.innerHTML = `<span class="st">${icon(acc.status === 'Active' ? 'check' : 'close')}</span>${esc(label)}: ${esc(accDaysLabel(acc))}`;
-    if (S.tab === 'accounts') renderAccounts();
+    refreshAccountsUI();
   } catch (e) {
     row.className = 'err'; row.innerHTML = `<span class="st">${icon('close')}</span>${esc(label)}: ${esc(e.message)}`;
   }
@@ -684,7 +703,7 @@ async function addAccountFromSheet() {
     await activateAccount(acc.id, cats);
     closeTop();
     toast(acc.status === 'Active' ? `Cuenta verificada: ${accDaysLabel(acc)}` : `Cuenta guardada (${acc.status})`, acc.status === 'Active' ? 'ok' : 'err');
-    switchTab('accounts');
+    if (accountsOpen()) renderAccounts(); else switchTab('home');
   } catch (e) {
     toast(e.message, 'err');
   } finally {
@@ -714,7 +733,7 @@ async function addManyFromSheet(links) {
   }
   if ($('btn-verify')) { btn.disabled = false; btn.textContent = 'Verificar cuenta'; }
   pushExpiryWatch();
-  if (S.tab === 'accounts') renderAccounts();
+  refreshAccountsUI();
   toast(`${ok} de ${links.length} cuentas guardadas`, ok ? 'ok' : 'err');
 }
 
@@ -926,10 +945,17 @@ function allCatsOf(type) { return (S.session && S.session.categories[type]) || [
 function catsOf(type) { const all = allCatsOf(type); return parentalLocked() ? all.filter(c => !catBlocked(type, c)) : all; }
 
 // Lista de una categoría (o de todo el tipo con catId = '*'), con caché.
-async function getList(type, catId) {
-  if (!S.session) return [];
+const listInflight = {};
+function getList(type, catId) {
+  if (!S.session) return Promise.resolve([]);
+  const key = `${type}:${catId}`, pk = `${S.session.id}:${key}`;
+  if (S.lists[key]) return Promise.resolve(S.lists[key]);
+  // Si ya se está pidiendo la misma lista (Inicio y otra pestaña a la vez), se espera esa misma respuesta.
+  if (!listInflight[pk]) listInflight[pk] = fetchList(type, catId).finally(() => { delete listInflight[pk]; });
+  return listInflight[pk];
+}
+async function fetchList(type, catId) {
   const key = `${type}:${catId}`;
-  if (S.lists[key]) return S.lists[key];
   const dbKey = `list:${S.session.id}:${key}`;
   const cached = await idb.get(dbKey);
   if (cached && Date.now() - cached.ts < TTL_STREAMS && Array.isArray(cached.items)) { S.lists[key] = cached.items; return cached.items; }
@@ -946,6 +972,59 @@ async function getList(type, catId) {
   return items;
 }
 
+/* ─── Nombres de categoría limpios, con ícono y color según el tema ─── */
+// "♾️⭐NOVELAS COLOMBIANAS⚡" → "Novelas colombianas"; "CO | NOTICIAS" → "Noticias" con la etiqueta CO.
+const CAT_CODES = new Set('CO MX AR ES US USA LAT LATAM CL PE VE EC BR UK GB FR IT DE PT DO PR CR PA GT HN SV NI BO PY UY CA CU EU IN TR RU NL BE CH SE NO DK PL'.split(' '));
+const KEEP_UP = new Set('TV HD FHD UHD 4K 8K HBO ESPN NBA NFL MLB NHL UFC WWE F1 PPV VIP TNT FOX BBC CNN MTV DW RCN TYC AXN USA UK TCM AMC HDR VOD 24/7 3D'.split(' '));
+const LOW_WORDS = new Set('de del la las el los y e en a al con por para sin o u'.split(' '));
+const catNameCache = new Map();
+function cleanCatName(raw) {
+  raw = String(raw || '');
+  if (catNameCache.has(raw)) return catNameCache.get(raw);
+  let s = raw.replace(/[^\p{L}\p{N}\s&+'.\/!?,:-]/gu, ' ').replace(/\s+/g, ' ').trim();
+  let cc = '';
+  const m = s.match(/^([A-Za-z]{2,5})\s*[-:.|/]?\s+(.+)$/);
+  if (m && CAT_CODES.has(m[1].toUpperCase()) && /\p{L}{3}/u.test(m[2])) { cc = m[1].toUpperCase(); s = m[2]; }
+  s = s.replace(/^[\s\-:.,/|!]+|[\s\-:.,/|]+$/g, '').trim();
+  // Todo en mayúsculas → "Así, en tipo oración", conservando siglas conocidas.
+  if (s && !/\p{Ll}/u.test(s)) {
+    let first = true;
+    s = s.split(' ').map(w => {
+      const up = w.toUpperCase();
+      if (KEEP_UP.has(up) || /\d/.test(w)) return up;
+      const lw = w.toLowerCase();
+      if (first && /\p{L}/u.test(w)) { first = false; return lw.charAt(0).toUpperCase() + lw.slice(1); }
+      return lw;
+    }).join(' ');
+  }
+  const out = { name: s || raw.trim() || 'Sin nombre', cc };
+  catNameCache.set(raw, out);
+  return out;
+}
+const CAT_THEMES = [
+  ['adult', null, 'lock', '#6b2f45', '#2a1018'],
+  ['loop', /24\s*\/?\s*7|24x7|24 horas/, 'loop', '#4f6a86', '#1b2633'],
+  ['kids', /infantil|kid|nin[oa]s|cartoon|disney|nick|junior|animad|anime|dibujo|bebe|baby|peque/, 'kid', '#d39a1d', '#5a3a08'],
+  ['sport', /deport|sport|futbol|soccer|liga|league|champions|copa |espn|tyc|win|dazn|nba|nfl|mlb|nhl|ufc|wwe|box|f1|formula|motor|tenis|golf|ppv|beisbol|basket|ciclismo|toros|gol/, 'ball', '#1f8a4c', '#0d3d24'],
+  ['news', /notic|news|informa|cnn|politic|24h/, 'news', '#2563b8', '#0f2a52'],
+  ['music', /music|musica|radio|mtv|vevo|concierto|karaoke|reggaeton|salsa|vallenato|rock|pop/, 'music', '#c2457a', '#4d1530'],
+  ['doc', /docu|discovery|nat ?geo|history|historia|animal|natur|ciencia|cultura|viaje|travel|cocina|food|planeta/, 'globe', '#2a8f8a', '#0e3b3a'],
+  ['novela', /novela|dorama|k-?drama|turca|telenov/, 'heart', '#bf4a2b', '#4a170c'],
+  ['faith', /relig|cristian|catolic|iglesia|evangel|biblia|fe /, 'star-o', '#8a7a3a', '#3a3214'],
+  ['uhd', /\b(4k|uhd|hdr|8k)\b/, 'hd', '#0e7490', '#082f3c'],
+  ['movie', /cine|movie|pelic|film|hbo|cinema|estreno|accion|terror|comedia|drama|suspenso|romance|ficcion|thriller|oscar|saga|marvel|western|belic|animacion|clasic/, 'film', '#9a3fc4', '#3b1352'],
+  ['series', /serie|temporada|show|reality/, 'ser', '#3f5fc4', '#17244f'],
+  ['country', /colombia|mexic|argentin|espan|chile|peru|venezuel|ecuador|estados unidos|latin|latam|local|nacional|regional|abierto|tdt|caribe|centroam|brasil|portugal|italia|franc|alemania|usa|eeuu/, 'flag', '#1f7a5a', '#0b3527'],
+];
+function catTheme(type, name, cc) {
+  const n = ' ' + normTxt(name) + ' ';
+  for (const [id, rx, ic, a, b] of CAT_THEMES) {
+    if (id === 'adult' ? ADULT_RX.test(name) : rx.test(n)) return { id, ic, a, b };
+  }
+  if (cc) return { id: 'country', ic: 'flag', a: '#1f7a5a', b: '#0b3527' };
+  const h = hue(name);
+  return { id: 'other', ic: type === 'live' ? 'tv' : type === 'vod' ? 'mov' : 'ser', a: `hsl(${h},38%,34%)`, b: `hsl(${h},42%,13%)` };
+}
 /* ─── Favoritos ─── */
 function favMap(type, accId) {
   const id = accId || S.activeId || '_'; S.favs[id] = S.favs[id] || { live: {}, vod: {}, series: {} };
@@ -964,20 +1043,251 @@ function toggleFav(type, it, btn, accId) {
   return !!m[id];
 }
 
+/* ═══════════════════════════ PANTALLA: INICIO ═══════════════════════════ */
+// Arriba el estado de la cuenta (lo propio de esta app); debajo, lo nuevo del servidor y tus cosas.
+const H = { gen: 0, hero: [], idx: 0, timer: null, rows: {}, cont: [], info: {}, focusT: null, cur: null };
+
+function renderHome() {
+  const el = $('home-body');
+  stopHero();
+  if (!S.accounts.length) { el.classList.remove('home'); renderAccounts(el); return; }
+  el.classList.add('home');
+  const gen = ++H.gen, top = el.scrollTop;
+  el.innerHTML = `<div id="home-acc"></div><div id="home-hero"></div><div id="home-cont"></div><div id="home-rows"></div>`;
+  renderHomeAccount();
+  if (!S.session) return;
+  renderHomeContinue();
+  renderHomeRows(gen).then(() => { if (gen === H.gen && top) el.scrollTop = top; });
+}
+
+function renderHomeAccount() {
+  const box = $('home-acc'); if (!box) return;
+  const acc = activeAccount();
+  if (!acc) { box.innerHTML = ''; return; }
+  const d = daysLeft(acc), lvl = accLevel(acc), g = acc.geo || {};
+  const big = acc.status !== 'Active' ? '0' : d === null ? '∞' : Math.max(d, 0);
+  const lbl = acc.status !== 'Active' ? esc(accDaysLabel(acc)) : d === null ? 'sin vencimiento' : `${d === 1 ? 'día' : 'días'}<small>vence ${esc(fmtDate(tsDate(acc.expDate)))}</small>`;
+  const sum = expirySummary(S.accounts), n = S.accounts.length;
+  const part = (k, c, one, many) => c ? ` · <em class="${k}">${c} ${c === 1 ? one : many}</em>` : '';
+  const foot = n > 1 ? `${n} cuentas${part('on', sum.ok, 'al día', 'al día')}${part('warn', sum.soon, 'por vencer', 'por vencer')}${part('off', sum.expired, 'vencida', 'vencidas')}`
+    : acc.isTrial ? 'Cuenta de prueba' : 'Tu cuenta';
+  const cons = `${esc(acc.activeCons ?? 0)} de ${esc(acc.maxCons ?? 0)} conexiones`;
+  box.innerHTML = `<div class="hacc">
+    <button class="hacc-main" onclick="openAccounts()">
+      <span class="dot ${lvl}"></span>
+      <span class="n"><b>${esc(acc.username)}</b><small>${esc(hostLabel(acc.host))}${g.countryCode ? ' · ' + flagEmoji(g.countryCode) : ''}</small></span>
+      <span class="hacc-days ${lvl}"><b>${big}</b><span>${lbl}</span></span>
+    </button>
+    ${meterHtml(acc)}
+    <div class="hacc-foot"><span class="hacc-sum">${n > 1 ? foot : `${foot} · ${cons}`}</span>
+      ${n > 1 ? `<button class="btn sm" onclick="openAccountSwitcher()">Cambiar</button>` : ''}
+      <button class="btn sm" onclick="openAccounts()">${icon('acc')}Cuentas</button></div>
+  </div>`;
+}
+
+/* Continuar viendo (películas y episodios de esta cuenta, lo último primero) */
+function continueAll(sess = S.session) {
+  if (!sess) return [];
+  let list = [];
+  try { if (window.NativeApp && NativeApp.getContinueWatching) list = JSON.parse(NativeApp.getContinueWatching() || '[]'); } catch { }
+  const pv = `${sess.host}/movie/${sess.username}/`, ps = `${sess.host}/series/${sess.username}/`;
+  return list.filter(x => x.url && x.dur > 0 && (x.url.startsWith(pv) || x.url.startsWith(ps)) && !(parentalLocked() && ADULT_RX.test(x.name || '')))
+    .slice(0, 20).map(x => ({ ...x, type: x.url.startsWith(pv) ? 'vod' : 'series' }));
+}
+function cwHtml(x, onclick) {
+  const left = Math.max(1, Math.round((x.dur - x.pos) / 60000));
+  return `<button class="cw" onclick="${onclick}"><div class="img">${x.poster ? `<img src="${esc(x.poster)}" loading="lazy" alt="" onerror="this.remove()">` : ''}<span class="pl">${icon('play')}</span><i style="width:${Math.round(x.pos / x.dur * 100)}%"></i></div><b>${esc(x.name)}</b><small>Quedan ${left} min</small></button>`;
+}
+function renderHomeContinue() {
+  const box = $('home-cont'); if (!box) return;
+  const list = H.cont = continueAll();
+  box.innerHTML = list.length ? `<section class="hrow"><h2 class="sec">Continuar viendo</h2><div class="rail">${list.map((x, i) => cwHtml(x, `homeResume(${i})`)).join('')}</div></section>` : '';
+}
+function homeResume(i) {
+  const x = H.cont[i]; if (!x) return;
+  nativePlay([{ name: x.name, url: x.url, streamId: x.streamId || '', isLive: false, poster: x.poster || '' }], 0, x.type === 'vod' ? 'Películas' : 'Series');
+}
+
+/* Filas */
+function skelRow(title) {
+  return `<section class="hrow"><h2 class="sec">${esc(title)}</h2><div class="rail">${'<div class="po skel"></div>'.repeat(7)}</div></section>`;
+}
+function posterRow(key, type, title, items, moreJs) {
+  if (!items.length) return '';
+  H.rows[key] = { type, items };
+  return `<section class="hrow"><h2 class="sec">${esc(title)}${moreJs ? `<button onclick="${moreJs}">Ver todas</button>` : ''}</h2>
+    <div class="rail">${items.map((it, i) => posterHtml(type, it, `homeOpen('${key}',${i})`, `data-hk="${key}" data-hi="${i}"`)).join('')}</div></section>`;
+}
+function homeItem(key, i) { const r = H.rows[key]; return r && r.items[i] ? { type: r.type, it: r.items[i] } : null; }
+function homeOpen(key, i) { const h = homeItem(key, i); if (h) openDetail(h.type, h.it); }
+function liveRowHtml(items) {
+  H.rows.live = { type: 'live', items };
+  return `<section class="hrow"><h2 class="sec"><span class="live-ttl"><i class="live-dot"></i>Tus canales ahora</span><button onclick="switchTab('live',{cat:'fav'})">Ver todos</button></h2>
+    <div class="rail">${items.map((it, i) => {
+      const sid = it.stream_id, e = S.epg[sid], noEpg = S.cfg.showEpg === false || S.epgOff;
+      return `<button class="lc" onclick="homePlayLive(${i})">${logoHtml(itemName(it), it.stream_icon)}<span class="n"><b>${esc(itemName(it))}</b>
+        <small class="epg" data-sid="${esc(sid)}">${e ? esc(e.text) : noEpg ? esc(catName('live', it.category_id) || 'En vivo') : 'Buscando qué están pasando…'}</small>${e && e.pct != null ? `<span class="p"><i style="width:${e.pct}%"></i></span>` : ''}</span></button>`;
+    }).join('')}</div></section>`;
+}
+function homePlayLive(i) {
+  const items = (H.rows.live || {}).items || []; if (!items[i]) return;
+  nativePlay(items.map(it => ({ name: itemName(it), url: streamUrl('live', it), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '' })), i, 'Favoritos');
+}
+function newestOf(type, items, n = 24) {
+  const key = type === 'vod' ? 'added' : 'last_modified';
+  const ts = it => +it[key] || +it.added || 0;
+  return filterAllowed(type, items).filter(it => itemImg(type, it))
+    .sort((a, b) => ts(b) - ts(a) || (+itemId(type, b) || 0) - (+itemId(type, a) || 0)).slice(0, n);
+}
+async function renderHomeRows(gen) {
+  const box = $('home-rows'); if (!box) return;
+  const favLive = filterAllowed('live', Object.values(favMap('live'))).slice(0, 20);
+  const favVod = filterAllowed('vod', Object.values(favMap('vod')));
+  const favSer = filterAllowed('series', Object.values(favMap('series')));
+  const showNew = S.cfg.homeNew !== false;
+  H.rows = {};
+  box.innerHTML = `${favLive.length ? liveRowHtml(favLive) : ''}
+    <div id="hr-vod">${showNew ? skelRow('Nuevas películas') : ''}</div>
+    <div id="hr-series">${showNew ? skelRow('Nuevas series') : ''}</div>
+    ${posterRow('fvod', 'vod', 'Películas favoritas', favVod, `switchTab('vod',{cat:'fav'})`)}
+    ${posterRow('fseries', 'series', 'Series favoritas', favSer, `switchTab('series',{cat:'fav'})`)}`;
+  if (favLive.length && S.cfg.showEpg !== false && !S.epgOff) { favLive.slice(0, 12).forEach(it => { if (!S.epg[it.stream_id]) epgQueue.push(String(it.stream_id)); }); pumpEpg(); }
+  const heroFrom = list => list.slice(0, 6);
+  if (!showNew) { setHero(heroFrom([...favVod.map(it => ({ type: 'vod', it })), ...favSer.map(it => ({ type: 'series', it }))])); return; }
+  $('home-hero').innerHTML = `<div class="hero-card skel"></div>`;
+  let hero = [];
+  for (const type of ['vod', 'series']) {
+    let top = [];
+    try { top = newestOf(type, await getList(type, '*')); } catch { }
+    if (gen !== H.gen) return;
+    const slot = $(`hr-${type}`); if (!slot) return;
+    // Las 6 primeras van al banner; la fila sigue con el resto.
+    if (!hero.length && top.length) { hero = top.slice(0, 6).map(it => ({ type, it })); setHero(hero); }
+    const rest = hero.length && hero[0].type === type && top.length > 12 ? top.slice(6) : top;
+    slot.innerHTML = posterRow(`n${type}`, type, type === 'vod' ? 'Nuevas películas' : 'Nuevas series', rest, `switchTab('${type}',{cat:'new'})`);
+  }
+  if (!hero.length) setHero(heroFrom(favVod.map(it => ({ type: 'vod', it }))));
+}
+
+/* Banner de estrenos: rota solo cada 7 s; en TV muestra lo que tengas seleccionado. */
+function yearOf(it) {
+  const y = String(it.year || it.releaseDate || it.release_date || '').match(/\d{4}/) || String(itemName(it)).match(/\((\d{4})\)/);
+  return y ? (y[1] || y[0]) : '';
+}
+function catName(type, id) {
+  const c = allCatsOf(type).find(c => String(c.category_id) === String(id));
+  return c ? cleanCatName(c.category_name).name : '';
+}
+function agoLabel(ts) {
+  ts = +ts; if (!ts) return '';
+  const d = Math.floor((Date.now() - ts * 1000) / 86400000);
+  if (d < 0 || d > 45) return '';
+  return d === 0 ? 'agregada hoy' : d === 1 ? 'agregada ayer' : `agregada hace ${d} días`;
+}
+function heroKey(h) { return `${h.type}:${itemId(h.type, h.it)}`; }
+function heroInfoHtml(h) {
+  const it = h.it, type = h.type, r = rating(it), y = yearOf(it), q = quality(itemName(it)), c = catName(type, it.category_id);
+  const ago = agoLabel(type === 'vod' ? it.added : (it.last_modified || it.added)), inf = H.info[heroKey(h)];
+  const multi = H.hero.length > 1 && !H.cur;
+  return `<span class="tagline">${H.cur ? (type === 'vod' ? 'Película' : 'Serie') : `${type === 'vod' ? 'Película nueva' : 'Serie nueva'}${ago ? ' · ' + ago : ''}`}</span>
+    <h1>${esc(cleanTitle(itemName(it)))}</h1>
+    <div class="hmeta">${r ? `<span class="s">★ ${r}</span>` : ''}${y ? `<span>${esc(y)}</span>` : ''}${c ? `<span>${esc(c)}</span>` : ''}${q ? `<span>${q}</span>` : ''}</div>
+    ${inf && inf.plot ? `<p class="hplot">${esc(inf.plot)}</p>` : ''}
+    <div class="hctas"><button class="btn hplay" onclick="event.stopPropagation();heroPlay()">${icon('play')}${type === 'vod' ? 'Ver ahora' : 'Ver episodios'}</button>
+      <button class="btn hglass" onclick="event.stopPropagation();heroMore()">${icon('info')}Detalles</button></div>
+    ${multi ? `<div class="hdots">${H.hero.map((_, i) => `<i class="${i === H.idx ? 'on' : ''}"></i>`).join('')}</div>` : ''}`;
+}
+function heroCurrent() { return H.cur || H.hero[H.idx] || null; }
+function heroBgOf(h) { const inf = H.info[heroKey(h)]; return (inf && inf.back) || itemImg(h.type, h.it); }
+function setHero(list) {
+  stopHero(); H.hero = list || []; H.idx = 0; H.cur = null;
+  const box = $('home-hero'); if (!box) return;
+  if (!H.hero.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="hero-card" id="hero-card" onclick="heroMore()">
+      <img class="hb" id="hero-bg" alt="" onerror="this.style.visibility='hidden'">
+      <img class="hpo" id="hero-po" alt="" onerror="this.style.visibility='hidden'">
+      <div class="hfade"></div><div class="hinfo" id="hero-info"></div></div>`;
+  paintHero();
+  const card = $('hero-card'); let x0 = null;
+  card.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; }, { passive: true });
+  card.addEventListener('touchend', e => {
+    if (x0 === null) return; const dx = e.changedTouches[0].clientX - x0; x0 = null;
+    if (Math.abs(dx) > 50 && H.hero.length > 1) { H.cur = null; goHero(H.idx + (dx < 0 ? 1 : -1)); startHero(); }
+  }, { passive: true });
+  startHero();
+}
+function paintHero() {
+  const h = heroCurrent(); if (!h || !$('hero-card')) return;
+  const bg = $('hero-bg'), po = $('hero-po'), inf = H.info[heroKey(h)], poster = itemImg(h.type, h.it);
+  const back = inf && inf.back;
+  $('hero-card').classList.toggle('has-back', !!back);
+  bg.style.visibility = ''; po.style.visibility = '';
+  bg.src = back || poster || ''; po.src = poster || '';
+  $('hero-info').innerHTML = heroInfoHtml(h);
+  $('hero-card').classList.remove('swap'); void $('hero-card').offsetWidth; $('hero-card').classList.add('swap');
+  if (window.IS_TV && !inf) fetchHeroInfo(h);
+}
+function goHero(i) { if (!H.hero.length) return; H.idx = (i + H.hero.length) % H.hero.length; paintHero(); }
+function startHero() {
+  stopHero();
+  if (H.hero.length < 2) return;
+  H.timer = setInterval(() => {
+    if (document.hidden || S.tab !== 'home' || S.stack.length || H.cur) return;
+    const hb = $('home-hero'); if (!hb) return;
+    if (hb.contains(document.activeElement) && document.activeElement !== document.body) return;
+    goHero(H.idx + 1);
+  }, 7000);
+}
+function stopHero() { if (H.timer) { clearInterval(H.timer); H.timer = null; } }
+function heroPlay() {
+  const h = heroCurrent(); if (!h) return;
+  if (h.type !== 'vod') { openDetail(h.type, h.it); return; }
+  nativePlay([{ name: cleanTitle(itemName(h.it)), url: streamUrl('vod', h.it), streamId: String(h.it.stream_id), isLive: false, poster: itemImg('vod', h.it) }], 0, 'Películas');
+}
+function heroMore() { const h = heroCurrent(); if (h) openDetail(h.type, h.it); }
+// TV: el fondo y la sinopsis se piden solo para lo que dejas seleccionado un momento.
+const heroInfoQueue = { busy: false, next: null };
+function fetchHeroInfo(h) {
+  heroInfoQueue.next = h;
+  clearTimeout(H.focusT);
+  H.focusT = setTimeout(async function run() {
+    if (heroInfoQueue.busy || !heroInfoQueue.next || !S.session || isRejecting()) return;
+    const cur = heroInfoQueue.next; heroInfoQueue.next = null;
+    const k = heroKey(cur); if (H.info[k]) return;
+    heroInfoQueue.busy = true;
+    try {
+      const d = await apiGet(`${S.session.apiUrl}&action=${cur.type === 'vod' ? 'get_vod_info&vod_id' : 'get_series_info&series_id'}=${encodeURIComponent(itemId(cur.type, cur.it))}`, 15000);
+      const inf = (d && d.info) || {};
+      const back = Array.isArray(inf.backdrop_path) ? inf.backdrop_path[0] : inf.backdrop_path;
+      H.info[k] = { back: back || '', plot: String(inf.plot || inf.description || '').trim() };
+    } catch { H.info[k] = { back: '', plot: '' }; }
+    heroInfoQueue.busy = false;
+    const now = heroCurrent(); if (now && heroKey(now) === k) paintHero();
+    if (heroInfoQueue.next) H.focusT = setTimeout(run, 400);
+  }, 800);
+}
+document.addEventListener('focusin', e => {
+  if (!window.IS_TV || S.tab !== 'home' || S.stack.length) return;
+  const p = e.target.closest && e.target.closest('[data-hk]'); if (!p) return;
+  const h = homeItem(p.dataset.hk, +p.dataset.hi); if (!h) return;
+  if (H.cur && heroKey(H.cur) === heroKey(h)) return;
+  H.cur = h; stopHero(); paintHero();
+});
+
 /* ═══════════════════════════ PANTALLA: EN VIVO ═══════════════════════════ */
 let liveObserver = null, epgObserver = null;
 function noAccountHtml() {
-  return emptyState('acc', 'Primero agrega una cuenta', 'Verifica una cuenta en la pestaña Cuentas para ver su contenido aquí.',
-    `<button class="btn primary" onclick="switchTab('accounts');openAddAccount()">${icon('plus')}Agregar cuenta</button>`);
+  return emptyState('acc', 'Primero agrega una cuenta', 'Verifica una cuenta para ver su contenido aquí.',
+    `<button class="btn primary" onclick="openAddAccount()">${icon('plus')}Agregar cuenta</button>`);
 }
 function chipsHtml(type, current) {
   const cats = catsOf(type);
   const chip = (key, label, extra = '') => `<button class="chip${String(current) === String(key) ? ' on' : ''}" data-cat="${esc(key)}" onclick="selectCat('${type}',${jsArg(String(key))})">${extra}${esc(label)}</button>`;
-  return chip('*', 'Categorías', icon('folder')) + chip('fav', 'Favoritos', icon('star')) + cats.map(c => chip(c.category_id, c.category_name || 'Sin nombre')).join('');
+  return chip('*', 'Categorías', icon('folder')) + (type !== 'live' ? chip('new', 'Recientes', icon('history')) : '') + chip('fav', 'Favoritos', icon('star')) + cats.map(c => chip(c.category_id, cleanCatName(c.category_name).name)).join('');
 }
 function defaultCat(type) {
   const saved = S.cfg[`cat_${S.activeId}_${type}`];
-  if (saved && (saved === 'fav' || saved === '*' || catsOf(type).some(c => String(c.category_id) === String(saved)))) return saved;
+  if (saved && (saved === 'fav' || saved === '*' || (saved === 'new' && type !== 'live') || catsOf(type).some(c => String(c.category_id) === String(saved)))) return saved;
   return '*';
 }
 function categoryCounts(type) {
@@ -987,16 +1297,24 @@ function categoryCounts(type) {
 function categoryListHtml(type) {
   const cats = catsOf(type), counts = categoryCounts(type), favN = Object.keys(favMap(type)).length;
   if (!cats.length) return emptyState('folder', 'Sin categorías', 'Este servidor no tiene categorías de este tipo.');
-  const row = (key, name, sub, ic) => `<button class="row cat-row" data-name="${esc(String(name).toLowerCase())}" onclick="selectCat('${type}',${jsArg(String(key))})">
-      <span class="cat-ic">${icon(ic)}</span><span class="n"><b>${esc(name)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>${icon('chev', 'chev')}</button>`;
+  const unit = type === 'live' ? 'canales' : type === 'vod' ? 'películas' : 'series';
+  const card = (key, name, sub, th, extra = '') => `<button class="row cat-row cc${extra}" data-name="${esc(normTxt(name))}" style="--ca:${th.a};--cb:${th.b}" onclick="selectCat('${type}',${jsArg(String(key))})">
+      <span class="cc-ic">${icon(th.ic)}</span><span class="n"><b>${esc(name)}</b>${sub ? `<small>${sub}</small>` : ''}</span></button>`;
+  const hidden = parentalLocked() ? allCatsOf(type).length - cats.length : 0;
   return `${cats.length > 10 ? `<div class="search">${icon('search')}<input type="text" placeholder="Buscar categoría" oninput="filterCatRows(this)" autocomplete="off"></div>` : ''}
-    ${parentalLocked() && allCatsOf(type).length > cats.length ? `<button class="row cat-row" onclick="askUnlock()"><span class="cat-ic" style="color:var(--warn)">${icon('lock')}</span><span class="n"><b>${allCatsOf(type).length - cats.length} ${allCatsOf(type).length - cats.length === 1 ? 'categoría oculta' : 'categorías ocultas'}</b><small>Control parental activo · toca para desbloquear</small></span>${icon('chev', 'chev')}</button>` : ''}
-    <div class="cat-rows">${favN ? row('fav', 'Favoritos', `${favN} guardados`, 'star') : ''}
-    ${cats.map(c => row(c.category_id, c.category_name || 'Sin nombre', counts ? `${fmtNum(counts[c.category_id] || 0)} ${type === 'live' ? 'canales' : type === 'vod' ? 'películas' : 'series'}` : '', 'folder')).join('')}</div>`;
+    <div class="cat-rows cgrid">${favN ? card('fav', 'Favoritos', `${favN} ${favN === 1 ? 'guardado' : 'guardados'}`, { ic: 'star', a: '#c98a12', b: '#4d3306' }) : ''}
+    ${type !== 'live' ? card('new', 'Recientes', 'Lo último que agregaron', { ic: 'history', a: 'rgba(var(--ar),.55)', b: 'var(--surface)' }) : ''}
+    ${cats.map(c => {
+      const { name, cc } = cleanCatName(c.category_name), th = catTheme(type, c.category_name || '', cc);
+      const n = counts ? `${fmtNum(counts[c.category_id] || 0)} ${unit}` : '';
+      return card(c.category_id, name, [cc ? `<em>${esc(cc)}</em>` : '', esc(n)].filter(Boolean).join(' '), th);
+    }).join('')}
+    ${hidden > 0 ? `<button class="row cat-row cc locked" data-name="" onclick="askUnlock()"><span class="cc-ic">${icon('lock')}</span><span class="n"><b>${hidden} ${hidden === 1 ? 'oculta' : 'ocultas'}</b><small>Control parental</small></span></button>` : ''}</div>`;
 }
 function filterCatRows(inp) {
   const q = inp.value.trim().toLowerCase();
-  inp.closest('.scroll').querySelectorAll('.cat-row').forEach(r => { r.hidden = q && !r.dataset.name.includes(q); });
+  const nq = normTxt(q);
+  inp.closest('.scroll').querySelectorAll('.cat-row').forEach(r => { r.hidden = nq && !r.dataset.name.includes(nq); });
 }
 function selectCat(type, cat) {
   S.cfg[`cat_${S.activeId}_${type}`] = cat; saveCfg();
@@ -1020,7 +1338,7 @@ async function loadLive(cat) {
   stopChecks();
   S.liveAll = [];
   if (cat === '*') { body.scrollTop = 0; body.innerHTML = categoryListHtml('live'); return; }
-  body.innerHTML = loadingHtml('Cargando canales…');
+  body.innerHTML = skelList();
   let items;
   try { items = cat === 'fav' ? Object.values(favMap('live')) : await getList('live', cat); }
   catch (e) { if (S.view.live === cat) body.innerHTML = errorState('live', e, `loadLive(${jsArg(cat)})`); return; }
@@ -1325,7 +1643,7 @@ function playLive(i) {
   // Para listas enormes se envía una ventana alrededor del canal elegido.
   const MAXP = 1500; let start = 0, slice = items;
   if (items.length > MAXP) { start = Math.max(0, i - MAXP / 2); slice = items.slice(start, start + MAXP); }
-  const label = S.view.live === 'fav' ? 'Favoritos' : S.view.live === '*' ? 'TV en Vivo' : (catsOf('live').find(c => String(c.category_id) === String(S.view.live))?.category_name || 'TV en Vivo');
+  const label = S.view.live === 'fav' ? 'Favoritos' : S.view.live === '*' ? 'TV en Vivo' : (catName('live', S.view.live) || 'TV en Vivo');
   nativePlay(slice.map(it => ({ name: itemName(it), url: streamUrl('live', it), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '' })), i - start, label);
 }
 function openLiveActions(i) {
@@ -1368,10 +1686,7 @@ function continueItems(type, sess) {
 function continueHtml(type) {
   const list = continueItems(type);
   if (!list.length) return '';
-  return `<h2 class="sec">Continuar viendo</h2><div class="rail">${list.map((x, i) => {
-    const left = Math.max(1, Math.round((x.dur - x.pos) / 60000));
-    return `<button class="cw" onclick="resumeItem('${type}',${i})"><div class="img">${x.poster ? `<img src="${esc(x.poster)}" loading="lazy" alt="" onerror="this.remove()">` : ''}<span class="pl">${icon('play')}</span><i style="width:${Math.round(x.pos / x.dur * 100)}%"></i></div><b>${esc(x.name)}</b><small>Quedan ${left} min</small></button>`;
-  }).join('')}</div>`;
+  return `<h2 class="sec">Continuar viendo</h2><div class="rail">${list.map((x, i) => cwHtml(x, `resumeItem('${type}',${i})`)).join('')}</div>`;
 }
 function renderContinue(type) { const el = $(`${type}-continue`); if (el) el.innerHTML = continueHtml(type); }
 function resumeItem(type, i) {
@@ -1385,11 +1700,11 @@ async function loadGrid(type, cat) {
   body.innerHTML = `<div id="${type}-continue">${continueHtml(type)}</div>
     <h2 class="sec">${type === 'vod' ? 'Explorar películas' : 'Explorar series'}</h2>
     <div class="chips" style="margin:0 -16px;padding-bottom:12px">${chipsHtml(type, cat)}</div>
-    <div id="${type}-grid-wrap">${loadingHtml(type === 'vod' ? 'Cargando películas…' : 'Cargando series…')}</div>`;
+    <div id="${type}-grid-wrap">${skelGrid()}</div>`;
   const on = body.querySelector('.chips .chip.on'); if (on) on.scrollIntoView({ inline: 'center', block: 'nearest' });
   if (cat === '*') { $(`${type}-grid-wrap`).innerHTML = categoryListHtml(type); return; }
   let items;
-  try { items = cat === 'fav' ? Object.values(favMap(type)) : await getList(type, cat); }
+  try { items = cat === 'fav' ? Object.values(favMap(type)) : await getList(type, cat === 'new' ? '*' : cat); }
   catch (e) { if (S.view[type] === cat) $(`${type}-grid-wrap`).innerHTML = errorState(type === 'vod' ? 'mov' : 'ser', e, `loadGrid('${type}',${jsArg(cat)})`); return; }
   if (S.view[type] !== cat) return;
   const wrap = $(`${type}-grid-wrap`);
@@ -1398,8 +1713,8 @@ async function loadGrid(type, cat) {
     return;
   }
   // Más recientes primero cuando el servidor da la fecha en que se agregó.
-  items = filterAllowed(type, items);
-  if (items[0] && items[0].added) items = [...items].sort((a, b) => (+b.added || 0) - (+a.added || 0));
+  items = cat === 'new' ? newestOf(type, items, 300) : filterAllowed(type, items);
+  if (cat !== 'new' && items[0] && items[0].added) items = [...items].sort((a, b) => (+b.added || 0) - (+a.added || 0));
   S.rendered[type] = items;
   wrap.innerHTML = `<div class="hint" style="margin-bottom:10px">${fmtNum(items.length)} ${type === 'vod' ? 'películas' : 'series'}</div><div class="grid" id="${type}-grid"></div><div class="more-sentinel" id="${type}-more"></div>`;
   S[`${type}Shown`] = 0;
@@ -1408,9 +1723,9 @@ async function loadGrid(type, cat) {
   gridObserver[type] = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) appendGrid(type); }, { root: body, rootMargin: '800px' });
   gridObserver[type].observe($(`${type}-more`));
 }
-function posterHtml(type, it, onclick) {
+function posterHtml(type, it, onclick, attrs = '') {
   const img = itemImg(type, it), r = rating(it), q = quality(it.name), name = cleanTitle(itemName(it));
-  return `<button class="po${img ? '' : ' noimg'}" onclick="${onclick}">${img ? `<img src="${esc(img)}" loading="lazy" alt="" onerror="this.parentNode.classList.add('noimg');this.remove()">` : ''}
+  return `<button class="po${img ? '' : ' noimg'}" onclick="${onclick}" ${attrs}>${img ? `<img src="${esc(img)}" loading="lazy" alt="" onerror="this.parentNode.classList.add('noimg');this.remove()">` : ''}
     ${r ? `<span class="r">★ ${r}</span>` : ''}${q ? `<span class="q">${q}</span>` : ''}<span class="t">${esc(name)}</span>${isFav(type, it) ? `<span class="fv">${icon('star')}</span>` : ''}</button>`;
 }
 function appendGrid(type) {
@@ -1424,6 +1739,74 @@ function appendGrid(type) {
 }
 
 /* ═══════════════════════════ FICHA ═══════════════════════════ */
+/* ─── Ficha teñida con el color de la portada ─── */
+const tintCache = {};
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+  if (mx === mn) return [0, 0, l];
+  const d = mx - mn, s = l > .5 ? d / (2 - mx - mn) : d / (mx + mn);
+  const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h * 60, s, l];
+}
+// Color dominante "vivo" de la portada: se agrupan los píxeles por tono y gana el más presente y saturado.
+function posterColor(img) {
+  const c = document.createElement('canvas'); c.width = 24; c.height = 36;
+  const x = c.getContext('2d'); x.drawImage(img, 0, 0, 24, 36);
+  const px = x.getImageData(0, 0, 24, 36).data, bins = Array.from({ length: 12 }, () => ({ w: 0, h: 0, s: 0 }));
+  for (let i = 0; i < px.length; i += 4) {
+    const [h, s, l] = rgbToHsl(px[i], px[i + 1], px[i + 2]);
+    if (l < .12 || l > .9) continue;
+    const w = s * (1 - Math.abs(l - .5) * 1.4);
+    const b = bins[Math.floor(h / 30) % 12]; b.w += w; b.h += h * w; b.s += s * w;
+  }
+  const best = bins.reduce((a, b) => b.w > a.w ? b : a);
+  if (best.w < 3) return null;   // casi en blanco y negro
+  return { h: Math.round(best.h / best.w), s: best.s / best.w };
+}
+function setTint(page, t) {
+  if (!t) { page.classList.remove('tinted'); return; }
+  const s = Math.round(Math.min(.62, Math.max(.32, t.s)) * 100);
+  page.style.setProperty('--tint-m', `hsl(${t.h},${s}%,22%)`);
+  page.style.setProperty('--tint-d', `hsl(${t.h},${Math.round(s * .8)}%,12%)`);
+  page.style.setProperty('--tint-b', `hsl(${t.h},${Math.max(s, 55)}%,66%)`);
+  page.classList.add('tinted');
+}
+function applyTint(page, url, name) {
+  const fallback = () => setTint(page, { h: hue(name), s: .4 });
+  page.dataset.tint = url || '';
+  if (!url) { fallback(); return; }
+  if (tintCache[url] !== undefined) { tintCache[url] ? setTint(page, tintCache[url]) : fallback(); return; }
+  const im = new Image();
+  im.onload = () => {
+    let t = null;
+    try { t = posterColor(im); } catch { t = null; }   // si la imagen no se deja leer, color según el nombre
+    tintCache[url] = t;
+    if (page.dataset.tint === url) { t ? setTint(page, t) : fallback(); }
+  };
+  im.onerror = () => { tintCache[url] = null; fallback(); };
+  im.src = url;
+}
+// La ficha "crece" desde la portada que tocaste.
+const lastTap = { r: null, t: 0 };
+document.addEventListener('click', e => {
+  const p = e.target && e.target.closest && e.target.closest('.po, .hero-card');
+  if (p) { lastTap.r = p.getBoundingClientRect(); lastTap.t = Date.now(); }
+}, true);
+function growFromTap(page) {
+  const r = lastTap.r;
+  if (!r || Date.now() - lastTap.t > 800 || !page.animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  lastTap.r = null;
+  const W = innerWidth, Hh = innerHeight;
+  const from = `inset(${Math.max(0, r.top)}px ${Math.max(0, W - r.right)}px ${Math.max(0, Hh - r.bottom)}px ${Math.max(0, r.left)}px round 12px)`;
+  page.style.transition = 'none';
+  try {
+    const a = page.animate([{ clipPath: from, opacity: .4 }, { clipPath: 'inset(0px 0px 0px 0px round 0px)', opacity: 1 }], { duration: 340, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    a.onfinish = a.oncancel = () => { page.style.transition = ''; };
+  } catch { page.style.transition = ''; }
+}
+
+
 async function openDetail(type, it, accId) {
   if (!it) return;
   accId = accId || S.activeId;
@@ -1432,6 +1815,9 @@ async function openDetail(type, it, accId) {
   const page = $('page-detail');
   page.innerHTML = detailShell(type, it, null);
   page.scrollTop = 0;
+  page.classList.remove('tinted');
+  applyTint(page, itemImg(type, it), itemName(it));
+  growFromTap(page);
   showPage('page-detail');
   try {
     const info = type === 'vod'
@@ -1440,6 +1826,7 @@ async function openDetail(type, it, accId) {
     if (!S.detail || S.detail.item !== it) return;
     S.detail.info = info || {};
     page.innerHTML = detailShell(type, it, S.detail.info);
+    if (!itemImg(type, it)) { const inf = S.detail.info.info || {}; applyTint(page, inf.cover_big || inf.movie_image || '', itemName(it)); }
   } catch (e) {
     if (!S.detail || S.detail.item !== it) return;
     const syn = page.querySelector('.syn'); if (syn) syn.textContent = `No se pudo cargar la información: ${e.message}`;
@@ -1463,7 +1850,7 @@ function detailShell(type, it, info) {
   if (type === 'series' && info && seasons.length && !S.detail.season) S.detail.season = seasons[0];
   const cast = String(inf.cast || inf.actors || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 12);
   return `
-    <div class="hero">${back ? `<img class="bg" src="${esc(back)}" alt="" onerror="this.remove()">` : ''}
+    <div class="hero">${back ? `<img class="bg${back === poster ? ' blur' : ''}" src="${esc(back)}" alt="" onerror="this.remove()">` : ''}
       <div class="top"><button class="ib" onclick="closeTop()" aria-label="Volver">${icon('back')}</button>
       <button class="ib" id="detail-fav" style="${fav ? 'color:var(--warn)' : ''}" onclick="toggleDetailFav()" aria-label="Favorito">${icon(fav ? 'star' : 'star-o')}</button></div>
     </div>
@@ -1596,7 +1983,7 @@ async function getListFor(acc, type) {
   return items;
 }
 function openSearch() {
-  if (!S.accounts.length) { toast('Primero agrega una cuenta', 'err'); switchTab('accounts'); return; }
+  if (!S.accounts.length) { toast('Primero agrega una cuenta', 'err'); switchTab('home'); return; }
   if (usableAccounts().length < 2) S.searchScope = 'active';
   showPage('page-search');
   renderSearchFilters();
@@ -1821,15 +2208,16 @@ async function sendListToTelegram() {
 
 /* ═══════════════════════════ AJUSTES ═══════════════════════════ */
 function openSettings() {
-  const st = S.cfg.startTab || 'accounts';
+  const st = TAB_TITLES[S.cfg.startTab] || S.cfg.startTab === 'last' ? S.cfg.startTab : 'home';
   const opt = (v, l) => `<option value="${v}"${st === v ? ' selected' : ''}>${l}</option>`;
   $('settings-body').innerHTML = `
     <div class="set-title">General</div>
     <div class="set-group">
       <div class="set-row"><span class="n"><b>Pantalla de inicio</b><small>La que se abre al entrar a la app</small></span>
-        <select onchange="S.cfg.startTab=this.value;saveCfg();toast('Guardado','ok')">${opt('accounts', 'Cuentas')}${opt('live', 'En vivo')}${opt('vod', 'Películas')}${opt('series', 'Series')}${opt('mylist', 'Mi lista')}${opt('last', 'La última que usé')}</select></div>
+        <select onchange="S.cfg.startTab=this.value;saveCfg();toast('Guardado','ok')">${opt('home', 'Inicio')}${opt('live', 'En vivo')}${opt('vod', 'Películas')}${opt('series', 'Series')}${opt('mylist', 'Mi lista')}${opt('last', 'La última que usé')}</select></div>
       <button class="set-row" onclick="S.cfg.autoCheck=!S.cfg.autoCheck;saveCfg();openSettings()"><span class="n"><b>Verificar canales automáticamente</b><small>Al abrir una categoría. Algunos servidores bloquean la IP si se verifican muchos canales; si pasa, déjalo apagado y usa el botón Verificar canales.</small></span><span class="switch${S.cfg.autoCheck ? ' on' : ''}"></span></button>
       <button class="set-row" onclick="S.cfg.showEpg=S.cfg.showEpg===false;saveCfg();openSettings()"><span class="n"><b>Mostrar la guía en la lista</b><small>Lo que están pasando en cada canal</small></span><span class="switch${S.cfg.showEpg !== false ? ' on' : ''}"></span></button>
+      <button class="set-row" onclick="S.cfg.homeNew=S.cfg.homeNew===false;saveCfg();openSettings();if(S.tab==='home')renderHome()"><span class="n"><b>Estrenos en Inicio</b><small>Descarga el catálogo una vez cada 6 horas para mostrar lo nuevo. Apágalo si tu TV box es lento.</small></span><span class="switch${S.cfg.homeNew !== false ? ' on' : ''}"></span></button>
       <button class="set-row" onclick="toggleOnlineOnly();openSettings()"><span class="n"><b>Ocultar canales caídos</b><small>En la pestaña En vivo, tras verificarlos</small></span><span class="switch${S.onlineOnly ? ' on' : ''}"></span></button>
     </div>
     <div class="set-title">Tema</div>
@@ -1974,9 +2362,9 @@ function init() {
   if (S.cfg.skin) setSkin(S.cfg.skin);
   updateListBadge();
   const activeId = S.cfg.activeId && accountById(S.cfg.activeId) ? S.cfg.activeId : (S.accounts[0] && S.accounts[0].id);
-  const first = S.accounts.length ? startTab() : 'accounts';
+  const first = S.accounts.length ? startTab() : 'home';
   S.tab = first;
-  if (activeId) activateAccount(activeId).then(() => switchTab(first)); else switchTab('accounts');
+  if (activeId) activateAccount(activeId).then(() => switchTab(first)); else switchTab('home');
   setTimeout(pushExpiryWatch, 2500);
   // Revisar si hay versión nueva (como mucho cada 12 horas).
   if (S.cfg.autoUpdate !== false && Date.now() - (S.cfg.lastUpdateCheck || 0) > 12 * 3600e3) setTimeout(() => checkUpdate(false), 4000);
@@ -2014,6 +2402,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   if (S.tab === 'live') refreshExpiredEpg();
   if (S.tab === 'vod' || S.tab === 'series') renderContinue(S.tab);
-  if (S.tab === 'accounts') checkClipboardHint();
+  if (S.tab === 'home' || accountsOpen()) checkClipboardHint();
+  if (S.tab === 'home') renderHomeContinue();
 });
 init();
