@@ -1197,7 +1197,7 @@ async function fetchEpgFull(sid) {
   S.epgFull[sid] = list;
   // También alimenta la línea "Ahora" de la vista de lista.
   const now = Date.now() / 1000, cur = list.find(p => p.s <= now && p.e > now);
-  if (cur && !S.epg[sid]) S.epg[sid] = { text: `Ahora: ${cur.t} · ${fmtTime(cur.s)}`, pct: Math.round((now - cur.s) / (cur.e - cur.s) * 100) };
+  if (cur && !S.epg[sid]) S.epg[sid] = { text: `Ahora: ${cur.t} · ${fmtTime(cur.s)}`, pct: Math.round((now - cur.s) / (cur.e - cur.s) * 100), title: cur.t, s: cur.s, e: cur.e };
   document.querySelectorAll(`.g-line[data-sid="${CSS.escape(String(sid))}"]`).forEach(el => {
     const idx = S.rendered.live.findIndex(it => String(it.stream_id) === String(sid));
     el.innerHTML = guideBlocks(sid, idx);
@@ -1981,8 +1981,38 @@ function init() {
   // Revisar si hay versión nueva (como mucho cada 12 horas).
   if (S.cfg.autoUpdate !== false && Date.now() - (S.cfg.lastUpdateCheck || 0) > 12 * 3600e3) setTimeout(() => checkUpdate(false), 4000);
 }
+// Al volver a la app: la guía de lo que están pasando se pone al día sola.
+function refreshExpiredEpg() {
+  const now = Date.now() / 1000;
+  for (const sid of Object.keys(S.epg)) {
+    const e = S.epg[sid];
+    if (e && e.e && e.e < now) {
+      delete S.epg[sid];
+      document.querySelectorAll(`small.epg[data-sid="${CSS.escape(sid)}"]`).forEach(el => {
+        el.textContent = ''; const bar = el.parentNode.querySelector('.p'); if (bar) bar.remove();
+        if (epgObserver) { delete el.dataset.obs; el.dataset.obs = '1'; epgQueue.push(sid); }
+      });
+    } else if (e && e.s && e.e > e.s) {
+      const pct = Math.round(Math.max(0, Math.min(100, (now - e.s) / (e.e - e.s) * 100)));
+      e.pct = pct;
+      document.querySelectorAll(`small.epg[data-sid="${CSS.escape(sid)}"]`).forEach(el => { const i = el.parentNode.querySelector('.p i'); if (i) i.style.width = pct + '%'; });
+    }
+  }
+  pumpEpg();
+  for (const sid of Object.keys(S.epgFull)) { const l = S.epgFull[sid]; if (l.length && l[l.length - 1].e < now + 3600) delete S.epgFull[sid]; }
+  if ($('guide') && Date.now() / 1000 - G.start > 3600) renderGuide(); else placeNowLine();
+}
+// Botón "Recargar" de En vivo: vuelve a pedir canales, guía y estado de la categoría.
+async function reloadLive() {
+  const cat = S.view.live; if (!S.session || !cat || cat === '*') return;
+  delete S.lists[`live:${cat}`]; await idb.set(`list:${S.session.id}:live:${cat}`, null);
+  S.epg = {}; S.epgFull = {}; S.status = {}; S.epgOff = false;
+  toast('Actualizando canales y guía…');
+  loadLive(cat);
+}
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
+  if (S.tab === 'live') refreshExpiredEpg();
   if (S.tab === 'vod' || S.tab === 'series') renderContinue(S.tab);
   if (S.tab === 'accounts') checkClipboardHint();
 });

@@ -64,6 +64,7 @@
       <div class="chips" id="live-chips"></div>
       <div class="livebar" id="live-bar" hidden>
         <span id="live-count"></span><span class="bar"><i id="live-bar-on" style="width:0"></i><u id="live-bar-off" style="width:0"></u></span>
+        <button class="btn sm icon-only" onclick="reloadLive()" aria-label="Recargar canales y guía" title="Recargar"><svg class="i"><use href="#i-refresh"/></svg></button>
         <button class="btn sm" id="btn-view" onclick="toggleLiveView()"></button>
         <button class="btn sm" id="btn-check" onclick="checkCurrent()"></button>
         <button id="btn-online" onclick="toggleOnlineOnly()" hidden><span>Solo en línea</span><span class="switch" id="sw-online"></span></button>

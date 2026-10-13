@@ -412,3 +412,5 @@ body.tv .g-prog:focus{box-shadow:0 0 0 3px var(--accent);z-index:6}
 .pin-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:300px;margin:0 auto 8px}
 .pin-pad button{height:56px;border-radius:14px;background:var(--raised);font-size:22px;font-weight:700;display:grid;place-items:center}
 .pin-pad button:active{background:var(--line)}
+
+.livebar .btn.sm.icon-only{width:32px;padding:0}
