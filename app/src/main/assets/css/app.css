@@ -570,3 +570,4 @@ body.tv .rail{padding-top:18px}
 .wn b{font-weight:700}
 /* Con una hoja abierta los avisos salen arriba, para no tapar sus botones */
 .sheet.show ~ .toasts{bottom:auto;top:calc(16px + var(--safe-top))}
+.set-row svg.chev{width:20px;height:20px;color:var(--muted)}
