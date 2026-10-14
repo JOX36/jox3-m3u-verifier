@@ -42,6 +42,8 @@ object ExternalEpg {
     @Volatile private var naturalKeys: Set<String> = emptySet()
     @Volatile private var loadedCodes: Set<String> = emptySet()
     @Volatile private var loadedAt = 0L
+    @Volatile private var pending: List<String>? = null
+    @Volatile private var pendingCb: (() -> Unit)? = null
     @Volatile var loading = false
         private set
     @Volatile var lastError = ""
@@ -62,7 +64,9 @@ object ExternalEpg {
         app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("codes", want.joinToString(",")).apply()
         synchronized(this) {
             val fresh = want.toSet() == loadedCodes && System.currentTimeMillis() - loadedAt < 3L * 3600 * 1000
-            if (loading || fresh) return
+            if (fresh) return
+            // Si ya está descargando, se anota para repetir con los países nuevos al terminar.
+            if (loading) { pending = want; pendingCb = onReady; return }
             loading = true
         }
         Thread {
@@ -78,6 +82,8 @@ object ExternalEpg {
                 loading = false
             }
             onReady?.invoke()
+            val next = synchronized(this) { val n = pending; pending = null; n }
+            if (next != null) ensure(app, next, pendingCb)
         }.apply { priority = Thread.MIN_PRIORITY; isDaemon = true }.start()
     }
 
@@ -207,6 +213,8 @@ object ExternalEpg {
         "hbo1" to "hbo",
         "caracoltelevision" to "caracol",
         "rcntelevision" to "rcn",
+        "gamatv" to "gamavision",
+        "goltvlatinoamerica" to "goltv",
     )
     private fun alias(k: String): String {
         for ((a, b) in ALIAS) if (k.startsWith(a)) return b + k.substring(a.length)
@@ -216,7 +224,8 @@ object ExternalEpg {
     /** "DSPORTS.+.HD(DTS+HD).co" → "DSPORTS + HD" */
     private fun idFormName(id: String): String {
         var s = id.replace(Regex("\\([^)]*\\)"), " ")
-        s = s.replace(Regex("\\.[a-zA-Z]{2}$"), "")
+        // Sufijo de la fuente: ".co", ".ec", ".dtvsp"…
+        s = s.replace(Regex("\\.[a-z]{2,6}$"), "")
         return s.replace('.', ' ').replace('_', ' ')
     }
 
@@ -252,21 +261,22 @@ object ExternalEpg {
     /** Canal de la guía para un canal del servidor (o null). */
     private val matchCache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-    fun match(ctx: Context, name: String, tvgId: String?): Chan? {
+    fun match(ctx: Context, name: String, tvgId: String?, countryHint: String? = null): Chan? {
         val map = chans
         if (map.isEmpty()) return null
         val manual = prefs(ctx).getString(manualKey(name), null)
         if (manual != null) return if (manual == "none") null else map[manual]
-        val ck = name + "\u0000" + (tvgId ?: "")
+        val ck = name + "\u0000" + (tvgId ?: "") + "\u0000" + (countryHint ?: "")
         matchCache[ck]?.let { return if (it.isEmpty()) null else map[it] }
-        val found = findMatch(name, tvgId)
+        val found = findMatch(name, tvgId, countryHint)
         matchCache[ck] = found?.key ?: ""
         return found
     }
 
-    private fun findMatch(name: String, tvgId: String?): Chan? {
+    private fun findMatch(name: String, tvgId: String?, countryHint: String?): Chan? {
         val idx = index
-        val country = tokensPrefix(name)
+        // País del canal: el que trae el nombre ("EC | …") o el de su categoría.
+        val country = tokensPrefix(name) ?: countryHint?.uppercase(Locale.ROOT)?.takeIf { it.length in 2..3 }
         val nat = naturalKeys
         fun best(list: List<Chan>?, k: String = ""): Chan? {
             if (list.isNullOrEmpty()) return null
@@ -304,8 +314,8 @@ object ExternalEpg {
     }
 
     /** Programas de un canal entre dos horas, en JSON para la interfaz. */
-    fun lookupJson(ctx: Context, name: String, tvgId: String?, fromSec: Long, toSec: Long): String {
-        val c = match(ctx, name, tvgId) ?: return ""
+    fun lookupJson(ctx: Context, name: String, tvgId: String?, fromSec: Long, toSec: Long, countryHint: String? = null): String {
+        val c = match(ctx, name, tvgId, countryHint) ?: return ""
         val arr = JSONArray()
         for (p in c.progs) {
             if (p.stop <= fromSec || p.start >= toSec) continue
@@ -336,6 +346,13 @@ object ExternalEpg {
         e.apply()
         matchCache.clear()
     }
+
+    /** Países que tienen guía para elegir en Ajustes (código del archivo → nombre). */
+    val COUNTRIES = linkedMapOf(
+        "CO1" to "Colombia", "EC1" to "Ecuador", "MX1" to "México", "AR1" to "Argentina", "CL1" to "Chile", "PE1" to "Perú",
+        "CR1" to "Costa Rica", "PA1" to "Panamá", "DO1" to "República Dominicana", "SV1" to "El Salvador", "UY1" to "Uruguay",
+        "BR1" to "Brasil", "ES1" to "España", "US2" to "Estados Unidos", "UK1" to "Reino Unido"
+    )
 
     fun status(): String = JSONObject()
         .put("ready", isReady()).put("loading", loading).put("channels", chans.size)

@@ -300,6 +300,7 @@ async function activateAccount(id, cats) {
     if (cached && cached.cats) cats = cached.cats;
   }
   S.session = buildSession(acc, cats || { live: [], vod: [], series: [] });
+  for (const k in catCountryCache) delete catCountryCache[k];
   updateAppbar();
   renderAll();
   setTimeout(ensureExtEpg, 3000);
@@ -1620,23 +1621,46 @@ window.onStreamChecked = function (id, online) {
 /* ─── Guía de internet (Kotlin: ExternalEpg) ─── */
 // Si el servidor no trae guía para un canal, se busca en guías públicas XMLTV por país
 // (epgshare01). Se bajan solas una vez al día; el canal se reconoce por su código de guía o su nombre.
-const EXT_FILES = { CO: 'CO1', MX: 'MX1', AR: 'AR1', CL: 'CL1', PE: 'PE1', EC: 'EC1', CR: 'CR1', PA: 'PA1', DO: 'DO1', UY: 'UY1', SV: 'SV1', BR: 'BR1', ES: 'ES1', US: 'US_SPORTS1', USA: 'US_SPORTS1', UK: 'UK1', GB: 'UK1' };
-const EXT_WORDS = [[/mexic/, 'MX'], [/argentin/, 'AR'], [/chile/, 'CL'], [/peru/, 'PE'], [/ecuador/, 'EC'], [/costa rica/, 'CR'], [/panama/, 'PA'], [/dominican/, 'DO'], [/uruguay/, 'UY'], [/salvador/, 'SV'], [/brasil|brazil/, 'BR'], [/espan|spain/, 'ES'], [/usa|estados unidos|eeuu/, 'US']];
-const EXT_ALWAYS = ['CO1', 'US_SPORTS1', 'BEIN1', 'DIRECTVSPORTS1'];
-const S_meta = {};   // stream_id → { n: nombre, g: código de guía } para buscar en la guía de internet
-function noteCh(it) { if (it && it.stream_id != null) S_meta[String(it.stream_id)] = { n: itemName(it), g: it.epg_channel_id || '' }; }
+const EXT_FILES = { CO: 'CO1', MX: 'MX1', AR: 'AR1', CL: 'CL1', PE: 'PE1', EC: 'EC1', CR: 'CR1', PA: 'PA1', DO: 'DO1', UY: 'UY1', SV: 'SV1', BR: 'BR1', ES: 'ES1', UK: 'UK1', GB: 'UK1' };
+const EXT_WORDS = [[/mexic/, 'MX'], [/argentin/, 'AR'], [/chile/, 'CL'], [/peru/, 'PE'], [/ecuador/, 'EC'], [/costa rica/, 'CR'], [/panama/, 'PA'], [/dominican/, 'DO'], [/uruguay/, 'UY'], [/salvador/, 'SV'], [/brasil|brazil/, 'BR'], [/espan|spain/, 'ES']];
+const EXT_SPORTS = ['US_SPORTS1', 'BEIN1', 'DIRECTVSPORTS1'];
+// Países que se pueden elegir en Ajustes (archivo de la guía → nombre).
+const EXT_COUNTRIES = [['CO1', 'Colombia'], ['EC1', 'Ecuador'], ['MX1', 'México'], ['AR1', 'Argentina'], ['CL1', 'Chile'], ['PE1', 'Perú'], ['CR1', 'Costa Rica'], ['PA1', 'Panamá'],
+  ['DO1', 'República Dominicana'], ['SV1', 'El Salvador'], ['UY1', 'Uruguay'], ['BR1', 'Brasil'], ['ES1', 'España'], ['US2', 'Estados Unidos'], ['UK1', 'Reino Unido']];
+const S_meta = {};   // stream_id → { n: nombre, g: código de guía, c: país de su categoría }
+// País de una categoría de En vivo ("EC | DEPORTES", "ECUADOR") para preferir la guía de ese país.
+const catCountryCache = {};
+function catCountry(catId) {
+  const k = String(catId); if (k in catCountryCache) return catCountryCache[k];
+  const c = allCatsOf('live').find(x => String(x.category_id) === k); let cc = '';
+  if (c) {
+    cc = cleanCatName(c.category_name).cc;
+    if (!cc) { const n = normTxt(c.category_name); for (const [rx, code] of EXT_WORDS) if (rx.test(n)) { cc = code; break; } }
+    if (!cc && /colombia/.test(normTxt(c.category_name))) cc = 'CO';
+  }
+  return (catCountryCache[k] = cc === 'USA' ? 'US' : cc === 'COL' ? 'CO' : cc);
+}
+function noteCh(it) { if (it && it.stream_id != null) S_meta[String(it.stream_id)] = { n: itemName(it), g: it.epg_channel_id || '', c: catCountry(it.category_id) }; }
 function extOn() { return S.cfg.extEpg !== false && !!(window.NativeEpg && NativeEpg.lookup); }
-function extCodes() {
+function extDetected() {
   const count = {};
   const add = (cc, w = 1) => { const f = EXT_FILES[cc]; if (f) count[f] = (count[f] || 0) + w; };
   for (const c of allCatsOf('live')) {
     const { cc } = cleanCatName(c.category_name); if (cc) add(cc);
     const n = normTxt(c.category_name); for (const [rx, k] of EXT_WORDS) if (rx.test(n)) add(k);
   }
+  // También el país del equipo (es-EC → Ecuador) y el del servidor.
+  const reg = (navigator.language || '').split('-')[1]; if (reg) add(reg.toUpperCase(), 2);
   const g = (activeAccount() || {}).geo; if (g && g.countryCode) add(g.countryCode, 0.5);
-  const countries = Object.entries(count).sort((a, b) => b[1] - a[1]).map(x => x[0]).filter(f => !EXT_ALWAYS.includes(f)).slice(0, 4);
-  return [...EXT_ALWAYS, ...countries];
+  return Object.entries(count).sort((a, b) => b[1] - a[1]).map(x => x[0]);
 }
+// Países de la guía: los elegidos en Ajustes o, si no hay elección, los que se detectan solos.
+function extCountryFiles() {
+  if (Array.isArray(S.cfg.extCountries)) return S.cfg.extCountries;
+  const det = extDetected();
+  return [...new Set(['CO1', ...det])].slice(0, 8);
+}
+function extCodes() { return [...new Set([...extCountryFiles(), ...EXT_SPORTS])]; }
 function ensureExtEpg() {
   if (!extOn() || !S.session) return;
   try { NativeEpg.ensure(extCodes().join(',')); } catch { }
@@ -1646,7 +1670,7 @@ function extPrograms(sid, from, to) {
   if (!extOn()) return null;
   const m = S_meta[String(sid)]; if (!m) return null;
   try {
-    const r = NativeEpg.lookup(m.n, m.g || '', Math.floor(from), Math.floor(to));
+    const r = NativeEpg.lookupIn ? NativeEpg.lookupIn(m.n, m.g || '', Math.floor(from), Math.floor(to), m.c || '') : NativeEpg.lookup(m.n, m.g || '', Math.floor(from), Math.floor(to));
     if (!r) return null;
     const d = JSON.parse(r);
     return (d.list || []).map(x => ({ t: x.t, d: x.d || '', s: +x.s, e: +x.e, ext: true })).filter(x => x.t && x.e > x.s).sort((a, b) => a.s - b.s);
@@ -1670,6 +1694,22 @@ window.onExtEpgReady = function () {
   for (const sid of Object.keys(S.epgFull)) if (!S.epgFull[sid].length) { delete S.epgFull[sid]; if (document.querySelector(`.g-line[data-sid="${CSS.escape(sid)}"]`)) guideQueue.push(sid); }
   pumpEpg(); pumpGuide();
 };
+// Ajustes: qué países de guía descargar.
+function openExtCountries() {
+  const sel = new Set(extCountryFiles()), det = new Set(extDetected());
+  let st = {}; try { st = JSON.parse(NativeEpg.status()); } catch { }
+  const loaded = new Set(st.codes || []);
+  showSheet('Países de la guía', `
+    <div class="hint" style="margin:-4px 0 10px">${Array.isArray(S.cfg.extCountries) ? 'Elegidos por ti.' : 'Elegidos solos según tus categorías y tu país.'} La guía de deportes (ESPN, DSports, beIN) va siempre.</div>
+    ${EXT_COUNTRIES.map(([f, n]) => `<button class="set-row" onclick="toggleExtCountry('${f}')"><span class="n"><b>${esc(n)}</b><small>${[det.has(f) ? 'Detectado' : '', loaded.has(f) ? 'Descargada' : sel.has(f) ? 'Se descargará' : ''].filter(Boolean).join(' · ') || '&nbsp;'}</small></span><span class="switch${sel.has(f) ? ' on' : ''}"></span></button>`).join('')}
+    ${Array.isArray(S.cfg.extCountries) ? `<button class="btn block" style="margin-top:12px" onclick="S.cfg.extCountries=null;saveCfg();ensureExtEpg();openExtCountries()">${icon('refresh')}Volver a automático</button>` : ''}`);
+}
+function toggleExtCountry(f) {
+  const cur = new Set(extCountryFiles());
+  if (cur.has(f)) cur.delete(f); else cur.add(f);
+  S.cfg.extCountries = [...cur]; saveCfg();
+  ensureExtEpg(); openExtCountries();
+}
 // Elegir a mano la guía de un canal (cuando no la encuentra sola o se equivoca).
 function openExtPicker(sid) {
   const m = S_meta[String(sid)]; if (!m || !extOn()) return;
@@ -2388,7 +2428,8 @@ function openSettings() {
       <button class="set-row" onclick="S.cfg.showEpg=S.cfg.showEpg===false;saveCfg();openSettings()"><span class="n"><b>Mostrar la guía en la lista</b><small>Lo que están pasando en cada canal</small></span><span class="switch${S.cfg.showEpg !== false ? ' on' : ''}"></span></button>
       <button class="set-row" onclick="S.cfg.homeNew=S.cfg.homeNew===false;saveCfg();openSettings();if(S.tab==='home')renderHome()"><span class="n"><b>Estrenos en Inicio</b><small>Descarga el catálogo una vez cada 6 horas para mostrar lo nuevo. Apágalo si tu TV box es lento.</small></span><span class="switch${S.cfg.homeNew !== false ? ' on' : ''}"></span></button>
       <button class="set-row" onclick="S.cfg.preload=S.cfg.preload===false;saveCfg();schedulePreload(5000);openSettings()"><span class="n"><b>Descargar catálogos en segundo plano</b><small>${(() => { const p = preloadStatus(); return `Despacio y con pausas, para que la búsqueda sea rápida. ${p.total ? `Listos ${p.ok} de ${p.total}.` : ''}`; })()}</small></span><span class="switch${S.cfg.preload !== false ? ' on' : ''}"></span></button>
-      ${window.NativeEpg ? `<button class="set-row" onclick="S.cfg.extEpg=S.cfg.extEpg===false;saveCfg();if(S.cfg.extEpg!==false)ensureExtEpg();openSettings()"><span class="n"><b>Guía de internet</b><small>Para los canales que tu servidor deja sin guía. ${(() => { try { const st = JSON.parse(NativeEpg.status()); return st.loading ? 'Descargando…' : st.ready ? `${fmtNum(st.channels)} canales disponibles.` : ''; } catch { return ''; } })()}</small></span><span class="switch${S.cfg.extEpg !== false ? ' on' : ''}"></span></button>` : ''}
+      ${window.NativeEpg ? `<button class="set-row" onclick="S.cfg.extEpg=S.cfg.extEpg===false;saveCfg();if(S.cfg.extEpg!==false)ensureExtEpg();openSettings()"><span class="n"><b>Guía de internet</b><small>Para los canales que tu servidor deja sin guía. ${(() => { try { const st = JSON.parse(NativeEpg.status()); return st.loading ? 'Descargando…' : st.ready ? `${fmtNum(st.channels)} canales disponibles.` : ''; } catch { return ''; } })()}</small></span><span class="switch${S.cfg.extEpg !== false ? ' on' : ''}"></span></button>
+      ${S.cfg.extEpg !== false ? `<button class="set-row" onclick="openExtCountries()"><span class="n"><b>Países de la guía</b><small>${esc(extCountryFiles().map(f => (EXT_COUNTRIES.find(c => c[0] === f) || [f, f])[1]).join(', ') || 'Ninguno')}</small></span>${icon('chev', 'chev')}</button>` : ''}` : ''}
       <button class="set-row" onclick="toggleOnlineOnly();openSettings()"><span class="n"><b>Ocultar canales caídos</b><small>En la pestaña En vivo, tras verificarlos</small></span><span class="switch${S.onlineOnly ? ' on' : ''}"></span></button>
     </div>
     <div class="set-title">Tema</div>
