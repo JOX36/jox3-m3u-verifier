@@ -45,7 +45,10 @@ jobs:
         env:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: jox3
-        run: ./gradlew assembleRelease
+        # Si falla, los errores salen como avisos en el resumen (más fáciles de leer que el registro completo).
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease 2>&1 | tee build.log || { grep -E -A14 "^e: |error:|What went wrong|Could not (find|resolve)|An issue was found" build.log | grep -v "^\s*$" | head -40 | while IFS= read -r l; do echo "::error::$l"; done; exit 1; }
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

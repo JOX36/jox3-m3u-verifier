@@ -63,6 +63,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
@@ -492,7 +493,12 @@ class PlayerActivity : AppCompatActivity() {
             .build()
 
         player = ExoPlayer.Builder(this)
-            .setRenderersFactory(DefaultRenderersFactory(this).setEnableDecoderFallback(true))
+            .setRenderersFactory(
+                DefaultRenderersFactory(this)
+                    .setEnableDecoderFallback(true)
+                    // Primero el decodificador del equipo; si no sabe (Dolby AC-3, DTS…), el de FFmpeg incluido.
+                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            )
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory, extractors))
             .setLoadControl(loadControl)
             .setAudioAttributes(
@@ -538,6 +544,16 @@ class PlayerActivity : AppCompatActivity() {
 
         override fun onPlayerError(error: PlaybackException) {
             handleError(error)
+        }
+
+        override fun onTracksChanged(tracks: Tracks) {
+            // Canal con audio que este equipo no puede reproducir: avisar en vez de dejarlo mudo sin explicación.
+            val audio = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+            if (audio.isEmpty()) return
+            if (audio.none { it.isSupported }) {
+                val f = audio.first().getTrackFormat(0)
+                showOsd("Audio no compatible (${codecName(f.sampleMimeType) ?: f.sampleMimeType ?: "desconocido"})")
+            }
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
