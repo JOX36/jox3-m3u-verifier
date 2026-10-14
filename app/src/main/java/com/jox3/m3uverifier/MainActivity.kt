@@ -344,9 +344,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
         @JavascriptInterface
-        fun lookup(name: String, tvgId: String, fromSec: Long, toSec: Long): String =
-            try { ExternalEpg.lookupJson(this@MainActivity, name, tvgId, fromSec, toSec) } catch (e: Exception) { "" }
-        @JavascriptInterface
         fun lookupIn(name: String, tvgId: String, fromSec: Long, toSec: Long, country: String): String =
             try { ExternalEpg.lookupJson(this@MainActivity, name, tvgId, fromSec, toSec, country) } catch (e: Exception) { "" }
         @JavascriptInterface

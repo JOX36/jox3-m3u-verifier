@@ -25,7 +25,6 @@ const SKINS = [
 const CHUNK_LIST = 80;
 const CHUNK_GRID = 48;
 const TTL_STREAMS = 6 * 3600e3;
-const TTL_CATS = 3600e3;
 
 const S = {
   tab: 'home',
@@ -49,7 +48,6 @@ const S = {
 /* ═══════════════════════════ UTILIDADES ═══════════════════════════ */
 const $ = id => document.getElementById(id);
 function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
-const escHtml = esc;
 function jsArg(v) { return esc(JSON.stringify(v ?? '')); }
 function icon(name, cls = '') { return `<svg class="i ${cls}"><use href="#i-${name}"/></svg>`; }
 function toast(msg, type = 'info') {
@@ -997,7 +995,6 @@ async function fetchList(type, catId) {
 // "♾️⭐NOVELAS COLOMBIANAS⚡" → "Novelas colombianas"; "CO | NOTICIAS" → "Noticias" con la etiqueta CO.
 const CAT_CODES = new Set('CO MX AR ES US USA LAT LATAM CL PE VE EC BR UK GB FR IT DE PT DO PR CR PA GT HN SV NI BO PY UY CA CU EU IN TR RU NL BE CH SE NO DK PL JM IE AT AU PH JP KR COL ARG MEX CHI ESP BRA'.split(' '));
 const KEEP_UP = new Set('TV HD FHD UHD 4K 8K HBO ESPN NBA NFL MLB NHL UFC WWE F1 PPV VIP TNT FOX BBC CNN MTV DW RCN TYC AXN USA UK TCM AMC HDR VOD 24/7 3D'.split(' '));
-const LOW_WORDS = new Set('de del la las el los y e en a al con por para sin o u'.split(' '));
 const catNameCache = new Map();
 function cleanCatName(raw) {
   raw = String(raw || '');
@@ -1113,7 +1110,7 @@ function continueAll(sess = S.session) {
   try { if (window.NativeApp && NativeApp.getContinueWatching) list = JSON.parse(NativeApp.getContinueWatching() || '[]'); } catch { }
   const pv = `${sess.host}/movie/${sess.username}/`, ps = `${sess.host}/series/${sess.username}/`;
   return list.filter(x => x.url && x.dur > 0 && (x.url.startsWith(pv) || x.url.startsWith(ps)) && !(parentalLocked() && ADULT_RX.test(x.name || '')))
-    .slice(0, 20).map(x => ({ ...x, type: x.url.startsWith(pv) ? 'vod' : 'series' }));
+    .slice(0, 40).map(x => ({ ...x, type: x.url.startsWith(pv) ? 'vod' : 'series' }));
 }
 const TYPE_LABEL = { vod: 'Película', series: 'Serie', live: 'TV' };
 function typeTag(type) { return TYPE_LABEL[type] ? `<em class="tb tb-${type}">${TYPE_LABEL[type]}</em>` : ''; }
@@ -1123,7 +1120,7 @@ function cwHtml(x, onclick) {
 }
 function renderHomeContinue() {
   const box = $('home-cont'); if (!box) return;
-  const list = H.cont = continueAll();
+  const list = H.cont = continueAll().slice(0, 20);
   box.innerHTML = list.length ? `<section class="hrow"><h2 class="sec">Continuar viendo</h2><div class="rail">${list.map((x, i) => cwHtml(x, `homeResume(${i})`)).join('')}</div></section>` : '';
 }
 /* Últimos canales en vivo vistos (los guarda el reproductor, también al cambiar de canal ahí) */
@@ -1239,7 +1236,6 @@ function heroInfoHtml(h) {
     ${multi ? `<div class="hdots">${H.hero.map((_, i) => `<i class="${i === H.idx ? 'on' : ''}"></i>`).join('')}</div>` : ''}`;
 }
 function heroCurrent() { return H.cur || H.hero[H.idx] || null; }
-function heroBgOf(h) { const inf = H.info[heroKey(h)]; return (inf && inf.back) || itemImg(h.type, h.it); }
 function setHero(list) {
   stopHero(); H.hero = list || []; H.idx = 0; H.cur = null;
   const box = $('home-hero'); if (!box) return;
@@ -1675,7 +1671,7 @@ function catCountry(catId) {
   return (catCountryCache[k] = cc === 'USA' ? 'US' : cc === 'COL' ? 'CO' : cc);
 }
 function noteCh(it) { if (it && it.stream_id != null) S_meta[String(it.stream_id)] = { n: itemName(it), g: it.epg_channel_id || '', c: catCountry(it.category_id) }; }
-function extOn() { return S.cfg.extEpg !== false && !!(window.NativeEpg && NativeEpg.lookup); }
+function extOn() { return S.cfg.extEpg !== false && !!(window.NativeEpg && NativeEpg.lookupIn); }
 function extDetected() {
   const count = {};
   const add = (cc, w = 1) => { const f = EXT_FILES[cc]; if (f) count[f] = (count[f] || 0) + w; };
@@ -1706,7 +1702,7 @@ function extPrograms(sid, from, to) { return extProgramsFor(S_meta[String(sid)],
 function extProgramsFor(m, from, to) {
   if (!extOn() || !m) return null;
   try {
-    const r = NativeEpg.lookupIn ? NativeEpg.lookupIn(m.n, m.g || '', Math.floor(from), Math.floor(to), m.c || '') : NativeEpg.lookup(m.n, m.g || '', Math.floor(from), Math.floor(to));
+    const r = NativeEpg.lookupIn(m.n, m.g || '', Math.floor(from), Math.floor(to), m.c || '');
     if (!r) return null;
     const d = JSON.parse(r);
     return (d.list || []).map(x => ({ t: x.t, d: x.d || '', s: +x.s, e: +x.e, ext: true })).filter(x => x.t && x.e > x.s).sort((a, b) => a.s - b.s);
@@ -1870,13 +1866,7 @@ function ensureGrid(type, cat) {
   if (S.view[type] === want && body.querySelector('.grid')) { renderContinue(type); return; }
   loadGrid(type, want);
 }
-function continueItems(type, sess) {
-  let list = [];
-  try { if (window.NativeApp && NativeApp.getContinueWatching) list = JSON.parse(NativeApp.getContinueWatching() || '[]'); } catch { }
-  const acc = sess || S.session; if (!acc) return [];
-  const prefix = `${acc.host}/${type === 'vod' ? 'movie' : 'series'}/${acc.username}/`;
-  return list.filter(x => x.url && x.url.startsWith(prefix) && x.dur > 0 && !(parentalLocked() && ADULT_RX.test(x.name || ''))).slice(0, 15);
-}
+function continueItems(type, sess) { return continueAll(sess || S.session).filter(x => x.type === type).slice(0, 15); }
 function continueHtml(type) {
   const list = continueItems(type);
   if (!list.length) return '';
@@ -2154,7 +2144,6 @@ window.onNativeAddToList = function (name, url, category) { addToList({ name, ur
 let searchType = 'all';
 S.searchScope = 'all';
 S.accLists = {};
-function accLabel(a) { return `${a.username} · ${hostLabel(a.host)}`; }
 function usableAccounts() {
   return S.accounts.filter(a => a.status === 'Active' && (daysLeft(a) === null || daysLeft(a) >= 0))
     .sort((x, y) => (y.id === S.activeId) - (x.id === S.activeId));
@@ -2670,7 +2659,7 @@ function refreshExpiredEpg() {
       delete S.epg[sid];
       document.querySelectorAll(`small.epg[data-sid="${CSS.escape(sid)}"]`).forEach(el => {
         el.textContent = ''; const bar = el.parentNode.querySelector('.p'); if (bar) bar.remove();
-        if (epgObserver) { delete el.dataset.obs; el.dataset.obs = '1'; epgQueue.push(sid); }
+        epgQueue.push(sid);
       });
     } else if (e && e.s && e.e > e.s) {
       const pct = Math.round(Math.max(0, Math.min(100, (now - e.s) / (e.e - e.s) * 100)));
@@ -2692,7 +2681,7 @@ async function reloadLive() {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  if (S.tab === 'live') refreshExpiredEpg();
+  if (S.tab === 'live' || S.tab === 'home') refreshExpiredEpg();
   if (S.tab === 'vod' || S.tab === 'series') renderContinue(S.tab);
   if (S.tab === 'home' || accountsOpen()) checkClipboardHint();
   if (S.tab === 'home') { renderHomeContinue(); renderHomeRecent(); }

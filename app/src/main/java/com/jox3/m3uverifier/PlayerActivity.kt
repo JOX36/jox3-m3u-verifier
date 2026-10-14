@@ -629,7 +629,7 @@ class PlayerActivity : AppCompatActivity() {
         if (casting) {
             player.stop()
             castLoad(item, if (item.isLive) C.TIME_UNSET else start)
-            if (item.isLive && item.streamId.isNotEmpty() && apiUrl.isNotEmpty()) fetchEpg(item)
+            if (item.isLive) fetchEpg(item)
             showControls()
             return
         }
@@ -640,7 +640,7 @@ class PlayerActivity : AppCompatActivity() {
         player.playWhenReady = true
         if (start > 0) showOsd("Reanudando en ${formatTime(start)}")
 
-        if (item.isLive && item.streamId.isNotEmpty() && apiUrl.isNotEmpty()) fetchEpg(item)
+        if (item.isLive) fetchEpg(item)
         showControls()
     }
 
@@ -1883,24 +1883,10 @@ class PlayerActivity : AppCompatActivity() {
         if (listEpgBusy || !channelListOpen || netExecutor.isShutdown) return
         val it = listEpgQueue.removeFirstOrNull() ?: return
         listEpgBusy = true
-        val urlStr = "$apiUrl&action=get_short_epg&stream_id=${it.streamId}&limit=2"
         try {
             netExecutor.execute {
-                var entry: EpgEntry? = null
-                try {
-                    val conn = URL(urlStr).openConnection() as HttpURLConnection
-                    conn.connectTimeout = 6000; conn.readTimeout = 6000
-                    conn.setRequestProperty("User-Agent", USER_AGENT)
-                    val text = try { conn.inputStream.bufferedReader().use { r -> r.readText() } } finally { conn.disconnect() }
-                    val now = System.currentTimeMillis() / 1000
-                    val arr = JSONObject(text).optJSONArray("epg_listings")
-                    if (arr != null) for (k in 0 until arr.length()) {
-                        val o = arr.optJSONObject(k) ?: continue
-                        val e = EpgEntry(decodeMaybeBase64(o.optString("title", "")).trim(),
-                            o.optString("start_timestamp", "0").toLongOrNull() ?: 0L, o.optString("stop_timestamp", "0").toLongOrNull() ?: 0L)
-                        if (e.title.isNotEmpty() && e.stopSec > now) { entry = e; break }
-                    }
-                } catch (e: Exception) { }
+                val now = System.currentTimeMillis() / 1000
+                val entry = serverEpg(it.streamId, 2).firstOrNull { e -> e.stopSec > now }
                 runOnUiThread {
                     listEpgBusy = false
                     if (isDestroyed) return@runOnUiThread
@@ -2158,30 +2144,34 @@ class PlayerActivity : AppCompatActivity() {
     // EPG
     // ═══════════════════════════════════════════════════════════════════
 
+    /** Guía corta del servidor para un canal (vacía si no tiene o falla). Se llama fuera del hilo principal. */
+    private fun serverEpg(streamId: String, limit: Int): List<EpgEntry> {
+        if (streamId.isEmpty() || apiUrl.isEmpty()) return emptyList()
+        val out = mutableListOf<EpgEntry>()
+        try {
+            val conn = URL("$apiUrl&action=get_short_epg&stream_id=$streamId&limit=$limit").openConnection() as HttpURLConnection
+            conn.connectTimeout = 6000
+            conn.readTimeout = 6000
+            conn.setRequestProperty("User-Agent", USER_AGENT)
+            val text = try { conn.inputStream.bufferedReader().use { it.readText() } } finally { conn.disconnect() }
+            val listings = JSONObject(text).optJSONArray("epg_listings") ?: return out
+            for (i in 0 until listings.length()) {
+                val o = listings.optJSONObject(i) ?: continue
+                val title = decodeMaybeBase64(o.optString("title", "")).trim()
+                val start = o.optString("start_timestamp", "0").toLongOrNull() ?: 0L
+                val stop = o.optString("stop_timestamp", "0").toLongOrNull() ?: 0L
+                if (title.isNotEmpty()) out.add(EpgEntry(title, start, stop))
+            }
+        } catch (e: Exception) { /* sin guía del servidor */ }
+        return out
+    }
+
     private fun fetchEpg(item: PlaylistItem) {
         if (netExecutor.isShutdown) return
         val token = ++epgToken
-        val urlStr = "$apiUrl&action=get_short_epg&stream_id=${item.streamId}&limit=2"
         try {
             netExecutor.execute {
-                val result = mutableListOf<EpgEntry>()
-                if (item.streamId.isNotEmpty() && apiUrl.isNotEmpty()) try {
-                    val conn = URL(urlStr).openConnection() as HttpURLConnection
-                    conn.connectTimeout = 6000
-                    conn.readTimeout = 6000
-                    conn.setRequestProperty("User-Agent", USER_AGENT)
-                    val text = try { conn.inputStream.bufferedReader().use { it.readText() } } finally { conn.disconnect() }
-                    val listings = JSONObject(text).optJSONArray("epg_listings")
-                    if (listings != null) {
-                        for (i in 0 until listings.length()) {
-                            val o = listings.optJSONObject(i) ?: continue
-                            val title = decodeMaybeBase64(o.optString("title", "")).trim()
-                            val start = o.optString("start_timestamp", "0").toLongOrNull() ?: 0L
-                            val stop = o.optString("stop_timestamp", "0").toLongOrNull() ?: 0L
-                            if (title.isNotEmpty()) result.add(EpgEntry(title, start, stop))
-                        }
-                    }
-                } catch (e: Exception) { /* sin EPG disponible */ }
+                val result = serverEpg(item.streamId, 2).toMutableList()
                 // El servidor no tiene guía para este canal: se busca en la guía de internet.
                 if (result.isEmpty() && item.isLive) {
                     val now = System.currentTimeMillis() / 1000

@@ -347,13 +347,6 @@ object ExternalEpg {
         matchCache.clear()
     }
 
-    /** Países que tienen guía para elegir en Ajustes (código del archivo → nombre). */
-    val COUNTRIES = linkedMapOf(
-        "CO1" to "Colombia", "EC1" to "Ecuador", "MX1" to "México", "AR1" to "Argentina", "CL1" to "Chile", "PE1" to "Perú",
-        "CR1" to "Costa Rica", "PA1" to "Panamá", "DO1" to "República Dominicana", "SV1" to "El Salvador", "UY1" to "Uruguay",
-        "BR1" to "Brasil", "ES1" to "España", "US2" to "Estados Unidos", "UK1" to "Reino Unido"
-    )
-
     fun status(): String = JSONObject()
         .put("ready", isReady()).put("loading", loading).put("channels", chans.size)
         .put("codes", JSONArray(loadedCodes.toList())).put("error", lastError).put("at", loadedAt).toString()
