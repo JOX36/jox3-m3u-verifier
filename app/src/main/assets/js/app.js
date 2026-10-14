@@ -302,6 +302,7 @@ async function activateAccount(id, cats) {
   S.session = buildSession(acc, cats || { live: [], vod: [], series: [] });
   updateAppbar();
   renderAll();
+  setTimeout(ensureExtEpg, 3000);
   if (!cats || Date.now() - (acc.checkedAt || 0) > 10 * 60e3) refreshActive(true);
 }
 
@@ -323,6 +324,7 @@ async function refreshActive(silent) {
     upsertAccount(fresh);
     S.session = buildSession(accountById(acc.id), cats);
     updateAppbar(); renderAll();
+    setTimeout(ensureExtEpg, 3000);
     if (!silent) toast('Cuenta actualizada', 'ok');
   } catch (e) {
     if (!silent) toast(e.message, 'err');
@@ -1137,14 +1139,15 @@ function liveRowHtml(items) {
   H.rows.live = { type: 'live', items };
   return `<section class="hrow"><h2 class="sec"><span class="live-ttl"><i class="live-dot"></i>Tus canales ahora</span><button onclick="switchTab('live',{cat:'fav'})">Ver todos</button></h2>
     <div class="rail">${items.map((it, i) => {
-      const sid = it.stream_id, e = S.epg[sid], noEpg = S.cfg.showEpg === false || S.epgOff;
+      noteCh(it);
+      const sid = it.stream_id, e = S.epg[sid], noEpg = S.cfg.showEpg === false || (S.epgOff && !extOn());
       return `<button class="lc" onclick="homePlayLive(${i})">${logoHtml(itemName(it), it.stream_icon)}<span class="n"><b>${esc(itemName(it))}</b>
         <small class="epg" data-sid="${esc(sid)}">${e ? esc(e.text) : noEpg ? esc(catName('live', it.category_id) || 'En vivo') : 'Buscando qué están pasando…'}</small>${e && e.pct != null ? `<span class="p"><i style="width:${e.pct}%"></i></span>` : ''}</span></button>`;
     }).join('')}</div></section>`;
 }
 function homePlayLive(i) {
   const items = (H.rows.live || {}).items || []; if (!items[i]) return;
-  nativePlay(items.map(it => ({ name: itemName(it), url: streamUrl('live', it), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '' })), i, 'Favoritos');
+  nativePlay(items.map(it => ({ name: itemName(it), url: streamUrl('live', it), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '', epgId: it.epg_channel_id || '' })), i, 'Favoritos');
 }
 function newestOf(type, items, n = 24) {
   const key = type === 'vod' ? 'added' : 'last_modified';
@@ -1164,7 +1167,7 @@ async function renderHomeRows(gen) {
     <div id="hr-series">${showNew ? skelRow('Nuevas series') : ''}</div>
     ${posterRow('fvod', 'vod', 'Películas favoritas', favVod, `switchTab('vod',{cat:'fav'})`)}
     ${posterRow('fseries', 'series', 'Series favoritas', favSer, `switchTab('series',{cat:'fav'})`)}`;
-  if (favLive.length && S.cfg.showEpg !== false && !S.epgOff) { favLive.slice(0, 12).forEach(it => { if (!S.epg[it.stream_id]) epgQueue.push(String(it.stream_id)); }); pumpEpg(); }
+  if (favLive.length && S.cfg.showEpg !== false && (!S.epgOff || extOn())) { favLive.slice(0, 12).forEach(it => { if (!S.epg[it.stream_id]) epgQueue.push(String(it.stream_id)); }); pumpEpg(); }
   const heroFrom = list => list.slice(0, 6);
   if (!showNew) { setHero(heroFrom([...favVod.map(it => ({ type: 'vod', it })), ...favSer.map(it => ({ type: 'series', it }))])); return; }
   $('home-hero').innerHTML = `<div class="hero-card skel"></div>`;
@@ -1396,6 +1399,7 @@ function appendLive() {
   const html = [];
   for (let i = from; i < to; i++) {
     const it = items[i], sid = it.stream_id, st = S.status[sid], name = itemName(it), fav = isFav('live', it);
+    noteCh(it);
     html.push(`<div class="ch" data-i="${i}" data-sid="${esc(sid)}" onclick="playLive(${i})">
       <span class="num">${esc(it.num || i + 1)}</span>${logoHtml(name, it.stream_icon)}
       <span class="n"><b>${esc(name)}</b><small class="epg" data-sid="${esc(sid)}">${S.epg[sid] ? esc(S.epg[sid].text) : ''}</small>${S.epg[sid] && S.epg[sid].pct != null ? `<span class="p"><i style="width:${S.epg[sid].pct}%"></i></span>` : ''}</span>
@@ -1485,6 +1489,7 @@ function appendGuide() {
   let html = '';
   for (let i = from; i < to; i++) {
     const it = items[i], sid = String(it.stream_id), name = itemName(it);
+    noteCh(it);
     html += `<div class="g-row" data-sid="${esc(sid)}">
       <button class="g-ch" style="width:${G.chW}px" onclick="playLive(${i})">${logoHtml(name, it.stream_icon)}<span>${esc(name)}</span></button>
       <div class="g-line" data-sid="${esc(sid)}">${guideBlocks(sid, i)}</div></div>`;
@@ -1495,7 +1500,7 @@ function appendGuide() {
 }
 function guideBlocks(sid, idx) {
   const list = S.epgFull[sid];
-  if (!list) return `<span class="g-empty">${S.epgOff ? 'Sin guía' : 'Cargando guía…'}</span>`;
+  if (!list) return `<span class="g-empty">${S.epgOff && !extOn() ? 'Sin guía' : 'Cargando guía…'}</span>`;
   const now = Date.now() / 1000;
   const vis = list.filter(p => p.e > G.start && p.s < G.end);
   if (!vis.length) return `<span class="g-empty">Sin guía para estas horas</span>`;
@@ -1508,31 +1513,36 @@ function guideBlocks(sid, idx) {
 }
 const guideQueue = []; let guideActive = 0;
 function pumpGuide() {
-  while (guideActive < 2 && guideQueue.length && !S.epgOff && !isRejecting()) {
+  while (guideActive < 2 && guideQueue.length && (serverEpgOk() || extOn())) {
     const sid = guideQueue.shift(); if (S.epgFull[sid]) continue;
     guideActive++;
-    fetchEpgFull(sid).finally(() => { guideActive--; setTimeout(pumpGuide, 350); });
+    fetchEpgFull(sid).then(net => net, () => true).then(net => { guideActive--; setTimeout(pumpGuide, net ? 350 : 0); });
   }
-  if (S.epgOff) document.querySelectorAll('.g-line .g-empty').forEach(e => { e.textContent = 'Sin guía'; });
+  if (S.epgOff && !extOn()) document.querySelectorAll('.g-line .g-empty').forEach(e => { e.textContent = 'Sin guía'; });
 }
 async function fetchEpgFull(sid) {
-  if (!S.session) return;
+  if (!S.session) return false;
   const accId = S.session.id;
-  let list = [];
-  try {
-    const d = await apiGet(`${S.session.apiUrl}&action=get_short_epg&stream_id=${encodeURIComponent(sid)}&limit=14`, 12000, { noBrake: true });
-    list = (d.epg_listings || []).map(x => ({ t: decodeB64(x.title).trim(), d: decodeB64(x.description || '').trim(), s: +x.start_timestamp || 0, e: +x.stop_timestamp || 0 }))
-      .filter(x => x.t && x.e > x.s).sort((a, b) => a.s - b.s);
-  } catch (e) { if (e && REJECT.has(e.status)) S.epgOff = true; }
-  if (!S.session || S.session.id !== accId) return;
+  let list = [], net = false;
+  if (serverEpgOk()) {
+    net = true;
+    try {
+      const d = await apiGet(`${S.session.apiUrl}&action=get_short_epg&stream_id=${encodeURIComponent(sid)}&limit=14`, 12000, { noBrake: true });
+      list = (d.epg_listings || []).map(x => ({ t: decodeB64(x.title).trim(), d: decodeB64(x.description || '').trim(), s: +x.start_timestamp || 0, e: +x.stop_timestamp || 0 }))
+        .filter(x => x.t && x.e > x.s).sort((a, b) => a.s - b.s);
+    } catch (e) { if (e && REJECT.has(e.status)) S.epgOff = true; }
+  }
+  if (!S.session || S.session.id !== accId) return net;
+  if (!list.length) list = extPrograms(sid, G.start - 3600, G.end + 3600) || [];
   S.epgFull[sid] = list;
   // También alimenta la línea "Ahora" de la vista de lista.
   const now = Date.now() / 1000, cur = list.find(p => p.s <= now && p.e > now);
-  if (cur && !S.epg[sid]) S.epg[sid] = { text: `Ahora: ${cur.t} · ${fmtTime(cur.s)}`, pct: Math.round((now - cur.s) / (cur.e - cur.s) * 100), title: cur.t, s: cur.s, e: cur.e };
+  if (cur && (!S.epg[sid] || S.epg[sid].none)) S.epg[sid] = { text: `Ahora: ${cur.t} · ${fmtTime(cur.s)}`, pct: Math.round((now - cur.s) / (cur.e - cur.s) * 100), title: cur.t, s: cur.s, e: cur.e, ext: !!cur.ext };
   document.querySelectorAll(`.g-line[data-sid="${CSS.escape(String(sid))}"]`).forEach(el => {
     const idx = S.rendered.live.findIndex(it => String(it.stream_id) === String(sid));
     el.innerHTML = guideBlocks(sid, idx);
   });
+  return net;
 }
 function openProgram(sid, k, idx) {
   const p = (S.epgFull[sid] || [])[k]; if (!p) return;
@@ -1541,11 +1551,12 @@ function openProgram(sid, k, idx) {
   const day = new Date(p.s * 1000).toDateString() === new Date().toDateString() ? 'Hoy' : new Date(p.s * 1000).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric' });
   const pct = live ? Math.round((now - p.s) / (p.e - p.s) * 100) : 0;
   showSheet(p.t, `
-    <div class="hint" style="margin:-4px 0 10px">${esc(it ? itemName(it) : '')} · ${esc(day)} ${fmtTime(p.s)} – ${fmtTime(p.e)}${live ? ' · <b style="color:var(--off)">EN VIVO</b>' : past ? ' · ya terminó' : ''}</div>
+    <div class="hint" style="margin:-4px 0 10px">${esc(it ? itemName(it) : '')} · ${esc(day)} ${fmtTime(p.s)} – ${fmtTime(p.e)}${live ? ' · <b style="color:var(--off)">EN VIVO</b>' : past ? ' · ya terminó' : ''}${p.ext ? ' · guía de internet' : ''}</div>
     ${live ? `<div class="upd-bar" style="margin:0 0 12px"><i style="width:${pct}%"></i></div>` : ''}
     ${p.d ? `<p class="syn" style="margin-top:0">${esc(p.d)}</p>` : '<div class="hint">Sin descripción.</div>'}
     <div class="list-actions" style="margin-top:16px">
       ${it ? `<button class="btn primary" onclick="closeTop();playLive(${idx})">${icon('play')}${live ? 'Ver ahora' : 'Ver el canal'}</button>` : ''}
+      ${p.ext ? `<button class="btn" onclick="openExtPicker(${jsArg(sid)})">${icon('info')}¿Guía equivocada?</button>` : ''}
       <button class="btn" onclick="closeTop()">Cerrar</button>
     </div>`);
 }
@@ -1606,6 +1617,90 @@ window.onStreamChecked = function (id, online) {
 };
 
 /* ─── Guía (EPG) para los canales visibles ─── */
+/* ─── Guía de internet (Kotlin: ExternalEpg) ─── */
+// Si el servidor no trae guía para un canal, se busca en guías públicas XMLTV por país
+// (epgshare01). Se bajan solas una vez al día; el canal se reconoce por su código de guía o su nombre.
+const EXT_FILES = { CO: 'CO1', MX: 'MX1', AR: 'AR1', CL: 'CL1', PE: 'PE1', EC: 'EC1', CR: 'CR1', PA: 'PA1', DO: 'DO1', UY: 'UY1', SV: 'SV1', BR: 'BR1', ES: 'ES1', US: 'US_SPORTS1', USA: 'US_SPORTS1', UK: 'UK1', GB: 'UK1' };
+const EXT_WORDS = [[/mexic/, 'MX'], [/argentin/, 'AR'], [/chile/, 'CL'], [/peru/, 'PE'], [/ecuador/, 'EC'], [/costa rica/, 'CR'], [/panama/, 'PA'], [/dominican/, 'DO'], [/uruguay/, 'UY'], [/salvador/, 'SV'], [/brasil|brazil/, 'BR'], [/espan|spain/, 'ES'], [/usa|estados unidos|eeuu/, 'US']];
+const EXT_ALWAYS = ['CO1', 'US_SPORTS1', 'BEIN1', 'DIRECTVSPORTS1'];
+const S_meta = {};   // stream_id → { n: nombre, g: código de guía } para buscar en la guía de internet
+function noteCh(it) { if (it && it.stream_id != null) S_meta[String(it.stream_id)] = { n: itemName(it), g: it.epg_channel_id || '' }; }
+function extOn() { return S.cfg.extEpg !== false && !!(window.NativeEpg && NativeEpg.lookup); }
+function extCodes() {
+  const count = {};
+  const add = (cc, w = 1) => { const f = EXT_FILES[cc]; if (f) count[f] = (count[f] || 0) + w; };
+  for (const c of allCatsOf('live')) {
+    const { cc } = cleanCatName(c.category_name); if (cc) add(cc);
+    const n = normTxt(c.category_name); for (const [rx, k] of EXT_WORDS) if (rx.test(n)) add(k);
+  }
+  const g = (activeAccount() || {}).geo; if (g && g.countryCode) add(g.countryCode, 0.5);
+  const countries = Object.entries(count).sort((a, b) => b[1] - a[1]).map(x => x[0]).filter(f => !EXT_ALWAYS.includes(f)).slice(0, 4);
+  return [...EXT_ALWAYS, ...countries];
+}
+function ensureExtEpg() {
+  if (!extOn() || !S.session) return;
+  try { NativeEpg.ensure(extCodes().join(',')); } catch { }
+}
+// Programas de la guía de internet para un canal (o null si no está).
+function extPrograms(sid, from, to) {
+  if (!extOn()) return null;
+  const m = S_meta[String(sid)]; if (!m) return null;
+  try {
+    const r = NativeEpg.lookup(m.n, m.g || '', Math.floor(from), Math.floor(to));
+    if (!r) return null;
+    const d = JSON.parse(r);
+    return (d.list || []).map(x => ({ t: x.t, d: x.d || '', s: +x.s, e: +x.e, ext: true })).filter(x => x.t && x.e > x.s).sort((a, b) => a.s - b.s);
+  } catch { return null; }
+}
+function extNowEntry(sid) {
+  const now = Date.now() / 1000, list = extPrograms(sid, now - 3600, now + 6 * 3600);
+  if (!list || !list.length) return null;
+  const cur = list.find(x => x.e > now && x.s <= now) || list.find(x => x.e > now);
+  if (!cur) return null;
+  const pct = cur.s <= now ? Math.round((now - cur.s) / (cur.e - cur.s) * 100) : null;
+  return { text: `${cur.s <= now ? 'Ahora' : 'Luego'}: ${cur.t} · ${fmtTime(cur.s)}`, pct, title: cur.t, s: cur.s, e: cur.e, ext: true };
+}
+// Cuando termina de bajar/leer la guía: volver a buscar los canales que quedaron sin guía.
+window.onExtEpgReady = function () {
+  for (const sid of Object.keys(S.epg)) {
+    if (!S.epg[sid].none) continue;
+    delete S.epg[sid];
+    if (document.querySelector(`small.epg[data-sid="${CSS.escape(sid)}"]`)) epgQueue.push(sid);
+  }
+  for (const sid of Object.keys(S.epgFull)) if (!S.epgFull[sid].length) { delete S.epgFull[sid]; if (document.querySelector(`.g-line[data-sid="${CSS.escape(sid)}"]`)) guideQueue.push(sid); }
+  pumpEpg(); pumpGuide();
+};
+// Elegir a mano la guía de un canal (cuando no la encuentra sola o se equivoca).
+function openExtPicker(sid) {
+  const m = S_meta[String(sid)]; if (!m || !extOn()) return;
+  let list = [];
+  try { list = JSON.parse(NativeEpg.channels() || '[]'); } catch { }
+  S.extPick = { sid: String(sid), list };
+  showSheet('Guía para este canal', `
+    <div class="hint" style="margin:-4px 0 10px">${esc(m.n)} · elige el canal en la guía de internet</div>
+    <div class="search">${icon('search')}<input type="text" id="ext-q" placeholder="Buscar canal en la guía" oninput="renderExtPicker()" autocomplete="off"></div>
+    <button class="menu-item" onclick="setExtGuide('')">${icon('refresh')}Automática</button>
+    <button class="menu-item" onclick="setExtGuide('none')">${icon('close')}Este canal no tiene guía</button>
+    <div id="ext-list"></div>`);
+  renderExtPicker();
+}
+function renderExtPicker() {
+  const q = normTxt(($('ext-q') || {}).value || ''), st = S.extPick; if (!st) return;
+  const hits = st.list.filter(c => !q || normTxt(c.n).includes(q)).slice(0, 80);
+  $('ext-list').innerHTML = hits.length ? hits.map(c => `<button class="menu-item" onclick="setExtGuide(${jsArg(c.k)})">${icon('tv')}<span style="flex:1">${esc(c.n)}</span><small class="hint">${esc(c.c.replace(/\d+$/, ''))}</small></button>`).join('')
+    : `<div class="hint" style="padding:14px 4px">${st.list.length ? 'Sin coincidencias' : 'La guía de internet todavía se está descargando. Prueba en un momento.'}</div>`;
+}
+function setExtGuide(key) {
+  const st = S.extPick; if (!st) return;
+  const m = S_meta[st.sid];
+  try { NativeEpg.setManual(m.n, key); } catch { }
+  delete S.epg[st.sid]; delete S.epgFull[st.sid];
+  closeTop();
+  epgQueue.push(st.sid); pumpEpg();
+  if (document.querySelector(`.g-line[data-sid="${CSS.escape(st.sid)}"]`)) { guideQueue.push(st.sid); pumpGuide(); }
+  toast(key === 'none' ? 'Guía quitada para este canal' : key ? 'Guía asignada' : 'Guía automática', 'ok');
+}
+
 const epgQueue = []; let epgActive = 0;
 function observeEpg(list) {
   if (!epgObserver) {
@@ -1620,35 +1715,44 @@ function observeEpg(list) {
   }
   list.querySelectorAll('small.epg:not([data-obs])').forEach(el => { el.dataset.obs = '1'; epgObserver.observe(el); });
 }
+function serverEpgOk() { return !S.epgOff && !isRejecting(); }
 function pumpEpg() {
-  while (epgActive < 1 && epgQueue.length && !S.epgOff && !isRejecting()) {
+  while (epgActive < 1 && epgQueue.length && (serverEpgOk() || extOn())) {
     const sid = epgQueue.shift(); if (S.epg[sid]) continue;
     epgActive++;
-    fetchEpg(sid).finally(() => { epgActive--; setTimeout(pumpEpg, 700); });
+    // Si se consultó al servidor, pausa; si solo se usó la guía de internet (local), sigue enseguida.
+    fetchEpg(sid).then(net => net, () => true).then(net => { epgActive--; setTimeout(pumpEpg, net ? 700 : 0); });
   }
 }
 async function fetchEpg(sid) {
-  if (!S.session) return;
+  if (!S.session) return false;
   const accId = S.session.id;
-  let entry = { text: 'Sin guía disponible', pct: null };
-  try {
-    const d = await apiGet(`${S.session.apiUrl}&action=get_short_epg&stream_id=${encodeURIComponent(sid)}&limit=2`, 10000, { noBrake: true });
-    const now = Date.now() / 1000;
-    const list = (d.epg_listings || []).map(x => ({ t: decodeB64(x.title).trim(), s: +x.start_timestamp || 0, e: +x.stop_timestamp || 0 })).filter(x => x.t);
-    const cur = list.find(x => x.e > now) || list[0];
-    if (cur) {
-      const pct = cur.e > cur.s ? Math.max(0, Math.min(100, (now - cur.s) / (cur.e - cur.s) * 100)) : null;
-      entry = { text: `Ahora: ${cur.t}${cur.s ? ` · ${fmtTime(cur.s)}` : ''}`, pct: pct === null ? null : Math.round(pct), title: cur.t, s: cur.s, e: cur.e };
+  let entry = null, net = false;
+  if (serverEpgOk()) {
+    net = true;
+    try {
+      const d = await apiGet(`${S.session.apiUrl}&action=get_short_epg&stream_id=${encodeURIComponent(sid)}&limit=2`, 10000, { noBrake: true });
+      const now = Date.now() / 1000;
+      const list = (d.epg_listings || []).map(x => ({ t: decodeB64(x.title).trim(), s: +x.start_timestamp || 0, e: +x.stop_timestamp || 0 })).filter(x => x.t);
+      const cur = list.find(x => x.e > now) || list[0];
+      if (cur) {
+        const pct = cur.e > cur.s ? Math.max(0, Math.min(100, (now - cur.s) / (cur.e - cur.s) * 100)) : null;
+        entry = { text: `Ahora: ${cur.t}${cur.s ? ` · ${fmtTime(cur.s)}` : ''}`, pct: pct === null ? null : Math.round(pct), title: cur.t, s: cur.s, e: cur.e };
+      }
+    } catch (e) {
+      if (e && REJECT.has(e.status)) S.epgOff = true;   // el servidor no da guía: no insistir
     }
-  } catch (e) {
-    if (e && REJECT.has(e.status)) { S.epgOff = true; return; }   // el servidor no da guía: no insistir
   }
-  if (!S.session || S.session.id !== accId) return;
+  if (!S.session || S.session.id !== accId) return net;
+  // Sin guía en el servidor: la de internet.
+  if (!entry) entry = extNowEntry(sid);
+  if (!entry) entry = { text: 'Sin guía disponible', pct: null, none: true };
   S.epg[sid] = entry;
   document.querySelectorAll(`small.epg[data-sid="${CSS.escape(String(sid))}"]`).forEach(el => {
     el.textContent = entry.text;
     const n = el.parentNode; if (entry.pct != null && !n.querySelector('.p')) n.insertAdjacentHTML('beforeend', `<span class="p"><i style="width:${entry.pct}%"></i></span>`);
   });
+  return net;
 }
 
 function playLive(i) {
@@ -1657,7 +1761,7 @@ function playLive(i) {
   const MAXP = 1500; let start = 0, slice = items;
   if (items.length > MAXP) { start = Math.max(0, i - MAXP / 2); slice = items.slice(start, start + MAXP); }
   const label = S.view.live === 'fav' ? 'Favoritos' : S.view.live === '*' ? 'TV en Vivo' : (catName('live', S.view.live) || 'TV en Vivo');
-  nativePlay(slice.map(it => ({ name: itemName(it), url: streamUrl('live', it), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '' })), i - start, label);
+  nativePlay(slice.map(it => ({ name: itemName(it), url: streamUrl('live', it), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '', epgId: it.epg_channel_id || '' })), i - start, label);
 }
 function openLiveActions(i) {
   const it = S.rendered.live[i]; if (!it) return;
@@ -1666,7 +1770,8 @@ function openLiveActions(i) {
     <button class="menu-item" onclick="closeTop();playLive(${i})">${icon('play')}Reproducir</button>
     <button class="menu-item" onclick="closeTop();addLiveToList(${i})">${icon('list')}Añadir a Mi lista</button>
     <button class="menu-item" onclick="closeTop();toggleFav('live',S.rendered.live[${i}]);refreshFavIcons()">${icon(fav ? 'star' : 'star-o')}${fav ? 'Quitar de favoritos' : 'Añadir a favoritos'}</button>
-    <button class="menu-item" onclick="closeTop();copyText(${jsArg(streamUrl('live', it))},'Enlace del canal copiado')">${icon('copy')}Copiar enlace</button>`);
+    <button class="menu-item" onclick="closeTop();copyText(${jsArg(streamUrl('live', it))},'Enlace del canal copiado')">${icon('copy')}Copiar enlace</button>
+    ${extOn() ? `<button class="menu-item" onclick="openExtPicker(${jsArg(String(it.stream_id))})">${icon('history')}Elegir guía de internet</button>` : ''}`);
 }
 function refreshFavIcons() {
   document.querySelectorAll('#live-list .ch').forEach(r => {
@@ -2145,7 +2250,7 @@ function playHit(type, h) {
   const sess = sessionFor(h.accId);
   if (type === 'live') {
     const it = h.item;
-    nativePlay([{ name: itemName(it), url: streamUrl('live', it, sess), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '' }], 0, `Búsqueda · ${serverName(accountById(h.accId) || {})}`, sess.apiUrl);
+    nativePlay([{ name: itemName(it), url: streamUrl('live', it, sess), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '', epgId: it.epg_channel_id || '' }], 0, `Búsqueda · ${serverName(accountById(h.accId) || {})}`, sess.apiUrl);
     return;
   }
   openDetail(type, h.item, h.accId);
@@ -2283,6 +2388,7 @@ function openSettings() {
       <button class="set-row" onclick="S.cfg.showEpg=S.cfg.showEpg===false;saveCfg();openSettings()"><span class="n"><b>Mostrar la guía en la lista</b><small>Lo que están pasando en cada canal</small></span><span class="switch${S.cfg.showEpg !== false ? ' on' : ''}"></span></button>
       <button class="set-row" onclick="S.cfg.homeNew=S.cfg.homeNew===false;saveCfg();openSettings();if(S.tab==='home')renderHome()"><span class="n"><b>Estrenos en Inicio</b><small>Descarga el catálogo una vez cada 6 horas para mostrar lo nuevo. Apágalo si tu TV box es lento.</small></span><span class="switch${S.cfg.homeNew !== false ? ' on' : ''}"></span></button>
       <button class="set-row" onclick="S.cfg.preload=S.cfg.preload===false;saveCfg();schedulePreload(5000);openSettings()"><span class="n"><b>Descargar catálogos en segundo plano</b><small>${(() => { const p = preloadStatus(); return `Despacio y con pausas, para que la búsqueda sea rápida. ${p.total ? `Listos ${p.ok} de ${p.total}.` : ''}`; })()}</small></span><span class="switch${S.cfg.preload !== false ? ' on' : ''}"></span></button>
+      ${window.NativeEpg ? `<button class="set-row" onclick="S.cfg.extEpg=S.cfg.extEpg===false;saveCfg();if(S.cfg.extEpg!==false)ensureExtEpg();openSettings()"><span class="n"><b>Guía de internet</b><small>Para los canales que tu servidor deja sin guía. ${(() => { try { const st = JSON.parse(NativeEpg.status()); return st.loading ? 'Descargando…' : st.ready ? `${fmtNum(st.channels)} canales disponibles.` : ''; } catch { return ''; } })()}</small></span><span class="switch${S.cfg.extEpg !== false ? ' on' : ''}"></span></button>` : ''}
       <button class="set-row" onclick="toggleOnlineOnly();openSettings()"><span class="n"><b>Ocultar canales caídos</b><small>En la pestaña En vivo, tras verificarlos</small></span><span class="switch${S.onlineOnly ? ' on' : ''}"></span></button>
     </div>
     <div class="set-title">Tema</div>

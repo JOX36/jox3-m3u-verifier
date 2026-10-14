@@ -94,7 +94,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** Un item reproducible dentro del playlist que manda el WebView. */
-data class PlaylistItem(val name: String, val url: String, val streamId: String, val isLive: Boolean, val poster: String = "")
+data class PlaylistItem(val name: String, val url: String, val streamId: String, val isLive: Boolean, val poster: String = "", val epgId: String = "")
 
 /**
  * Reproductor nativo (ExoPlayer/Media3) a pantalla completa real:
@@ -325,6 +325,10 @@ class PlayerActivity : AppCompatActivity() {
         setupEdgeToEdge()
         parsePayload(readPayload(intent))
         castContext = CastSupport.context(this)
+        // Por si el reproductor se abre sin pasar por la interfaz: cargar la guía de internet ya descargada.
+        ExternalEpg.ensure(this, ExternalEpg.savedCodes(this)) {
+            runOnUiThread { if (!isDestroyed) current?.let { if (it.isLive && epgNow == null) fetchEpg(it) } }
+        }
         buildUi()
         applyFonts(root)
         initPlayer()
@@ -446,7 +450,8 @@ class PlayerActivity : AppCompatActivity() {
                             url = o.optString("url", ""),
                             streamId = o.optString("streamId", ""),
                             isLive = o.optBoolean("isLive", false),
-                            poster = o.optString("poster", "")
+                            poster = o.optString("poster", ""),
+                            epgId = o.optString("epgId", "")
                         )
                     )
                 }
@@ -1919,13 +1924,13 @@ class PlayerActivity : AppCompatActivity() {
     // ═══════════════════════════════════════════════════════════════════
 
     private fun fetchEpg(item: PlaylistItem) {
-        if (item.streamId.isEmpty() || apiUrl.isEmpty() || netExecutor.isShutdown) return
+        if (netExecutor.isShutdown) return
         val token = ++epgToken
         val urlStr = "$apiUrl&action=get_short_epg&stream_id=${item.streamId}&limit=2"
         try {
             netExecutor.execute {
                 val result = mutableListOf<EpgEntry>()
-                try {
+                if (item.streamId.isNotEmpty() && apiUrl.isNotEmpty()) try {
                     val conn = URL(urlStr).openConnection() as HttpURLConnection
                     conn.connectTimeout = 6000
                     conn.readTimeout = 6000
@@ -1942,6 +1947,12 @@ class PlayerActivity : AppCompatActivity() {
                         }
                     }
                 } catch (e: Exception) { /* sin EPG disponible */ }
+                // El servidor no tiene guía para este canal: se busca en la guía de internet.
+                if (result.isEmpty() && item.isLive) {
+                    val now = System.currentTimeMillis() / 1000
+                    ExternalEpg.programs(this, item.name, item.epgId, now - 3600, now + 12 * 3600)
+                        .forEach { result.add(EpgEntry(it.title, it.start, it.stop)) }
+                }
                 runOnUiThread {
                     // Si el usuario ya cambió de canal, esta respuesta es vieja: se descarta.
                     if (token != epgToken || isDestroyed) return@runOnUiThread
