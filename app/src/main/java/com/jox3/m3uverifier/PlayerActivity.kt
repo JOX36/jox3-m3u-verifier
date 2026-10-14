@@ -144,6 +144,7 @@ class PlayerActivity : AppCompatActivity() {
         private const val PREFS_BRIDGE = "jox3_bridge"
         private const val KEY_PENDING_ADDS = "pending_adds"
         private const val KEY_CONTINUE = "continue_watching"
+        private const val KEY_RECENT_LIVE = "recent_live"
         private const val MAX_CONTINUE = 40
 
         private const val ACTION_PIP = "com.jox3.m3uverifier.PIP_CONTROL"
@@ -160,6 +161,10 @@ class PlayerActivity : AppCompatActivity() {
         /** Películas/episodios empezados y no terminados, el más reciente primero. */
         fun continueWatching(ctx: Context): String =
             ctx.getSharedPreferences(PREFS_PLAYER, Context.MODE_PRIVATE).getString(KEY_CONTINUE, "[]") ?: "[]"
+
+        /** Últimos canales en vivo abiertos (el más reciente primero), también los cambiados dentro del reproductor. */
+        fun recentLive(ctx: Context): String =
+            ctx.getSharedPreferences(PREFS_PLAYER, Context.MODE_PRIVATE).getString(KEY_RECENT_LIVE, "[]") ?: "[]"
 
         fun takePendingAdds(ctx: Context): JSONArray {
             val prefs = ctx.getSharedPreferences(PREFS_BRIDGE, Context.MODE_PRIVATE)
@@ -604,6 +609,7 @@ class PlayerActivity : AppCompatActivity() {
         videoW = 0; videoH = 0
         configureControlsForItem(item)
 
+        if (item.isLive) saveRecentLive(item)
         epgToken++
         epgNow = null; epgNext = null
         updateEpgViews()
@@ -636,6 +642,20 @@ class PlayerActivity : AppCompatActivity() {
 
         if (item.isLive && item.streamId.isNotEmpty() && apiUrl.isNotEmpty()) fetchEpg(item)
         showControls()
+    }
+
+    private fun saveRecentLive(item: PlaylistItem) {
+        try {
+            val sp = getSharedPreferences(PREFS_PLAYER, MODE_PRIVATE)
+            val old = try { JSONArray(sp.getString(KEY_RECENT_LIVE, "[]")) } catch (e: Exception) { JSONArray() }
+            val out = JSONArray().put(JSONObject().put("name", item.name).put("url", item.url).put("streamId", item.streamId)
+                .put("poster", item.poster).put("epgId", item.epgId).put("ts", System.currentTimeMillis()))
+            for (i in 0 until old.length()) {
+                val o = old.optJSONObject(i) ?: continue
+                if (o.optString("url") != item.url && out.length() < 20) out.put(o)
+            }
+            sp.edit().putString(KEY_RECENT_LIVE, out.toString()).apply()
+        } catch (e: Exception) { }
     }
 
     // ═══ Arranque seguro ═══
@@ -1375,6 +1395,20 @@ class PlayerActivity : AppCompatActivity() {
             divider = null
             dividerHeight = 0
             isVerticalScrollBarEnabled = true
+            // Al desplazarse por la lista de canales, pedir la guía de los que quedan a la vista.
+            setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
+                override fun onScrollStateChanged(view: android.widget.AbsListView, state: Int) {
+                    if (state == android.widget.AbsListView.OnScrollListener.SCROLL_STATE_IDLE && channelListOpen)
+                        askListEpg(view.firstVisiblePosition, view.lastVisiblePosition + 3)
+                }
+                // Con el control remoto la lista avanza sin "soltar": se pide al quedarse quieta un momento.
+                override fun onScroll(view: android.widget.AbsListView, first: Int, visible: Int, total: Int) {
+                    if (!channelListOpen) return
+                    ui.removeCallbacks(listScrollRunnable)
+                    listScrollFirst = first; listScrollLast = first + visible
+                    ui.postDelayed(listScrollRunnable, 450)
+                }
+            })
             setOnItemClickListener { _, _, position, _ ->
                 panelAdapter.rows.getOrNull(position)?.action?.invoke()
             }
@@ -1761,6 +1795,7 @@ class PlayerActivity : AppCompatActivity() {
     // ═══════════════════════════════════════════════════════════════════
 
     private fun openPanel(title: String, rows: List<Row>, parent: (() -> Unit)?, selection: Int = -1) {
+        channelListOpen = false
         panelTitle.text = title
         panelParent = parent
         panelAdapter.rows = rows
@@ -1779,6 +1814,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun closePanel() {
         if (castMenuOpen) { castMenuOpen = false; stopCastScan() }
+        channelListOpen = false; listEpgQueue.clear()
         if (panelRoot.visibility != View.VISIBLE) return
         panel.animate().translationX(dp(400).toFloat()).setDuration(180).withEndAction {
             panelRoot.visibility = View.GONE
@@ -1791,6 +1827,34 @@ class PlayerActivity : AppCompatActivity() {
         if (parent != null) parent() else closePanel()
     }
 
+    // ═══ Lista de canales con lo que están pasando ═══
+    // Debajo de cada canal: el programa actual. Sale primero de lo ya conocido y de la guía de internet
+    // (local, instantáneo); para los canales visibles se le pregunta al servidor de a uno, con pausa.
+    private val listEpg = HashMap<String, EpgEntry>()
+    private val listEpgAsked = HashSet<String>()
+    private val listEpgQueue = ArrayDeque<PlaylistItem>()
+    private var listEpgBusy = false
+    private var channelListOpen = false
+    private var listScrollFirst = 0
+    private var listScrollLast = 0
+    private val listScrollRunnable = Runnable { askListEpg(listScrollFirst, listScrollLast + 3) }
+
+    private fun listNow(it: PlaylistItem): EpgEntry? {
+        val now = System.currentTimeMillis() / 1000
+        if (it === current) epgNow?.let { e -> if (e.stopSec > now) return e }
+        listEpg[it.streamId]?.let { e -> if (e.stopSec > now) return e }
+        val p = try { ExternalEpg.programs(this, it.name, it.epgId, now, now + 60).firstOrNull() } catch (e: Exception) { null }
+        return p?.let { EpgEntry(it.title, it.start, it.stop) }
+    }
+
+    private fun channelRows(): List<Row> {
+        val fmt = android.text.format.DateFormat.getTimeFormat(this)
+        return items.mapIndexed { i, it ->
+            val sub = if (it.isLive) listNow(it)?.let { e -> "Ahora: ${e.title}" + if (e.startSec > 0) "  ·  ${fmt.format(Date(e.startSec * 1000))}" else "" } else null
+            Row("${i + 1}.  ${it.name}", sub, i == currentIndex) { closePanel(); if (i != currentIndex) playIndex(i) }
+        }
+    }
+
     private fun openChannelList() {
         if (items.isEmpty()) return
         val title = when {
@@ -1798,10 +1862,53 @@ class PlayerActivity : AppCompatActivity() {
             category.equals("Series", ignoreCase = true) -> "Episodios"
             else -> category.ifEmpty { "Lista" }
         }
-        val rows = items.mapIndexed { i, it ->
-            Row("${i + 1}.  ${it.name}", selected = i == currentIndex) { closePanel(); if (i != currentIndex) playIndex(i) }
+        openPanel("$title (${items.size})", channelRows(), null, currentIndex)
+        channelListOpen = true
+        if (isLive) askListEpg(currentIndex - 6, currentIndex + 14)
+    }
+
+    /** Pide al servidor la guía de los canales entre dos posiciones de la lista (solo los que faltan). */
+    private fun askListEpg(from: Int, to: Int) {
+        if (apiUrl.isEmpty() || !channelListOpen) return
+        for (i in from.coerceAtLeast(0)..to.coerceAtMost(items.size - 1)) {
+            val it = items[i]
+            if (!it.isLive || it.streamId.isEmpty() || listEpgAsked.contains(it.streamId) || listNow(it) != null) continue
+            listEpgAsked.add(it.streamId)
+            listEpgQueue.addLast(it)
         }
-        openPanel("$title (${items.size})", rows, null, currentIndex)
+        pumpListEpg()
+    }
+
+    private fun pumpListEpg() {
+        if (listEpgBusy || !channelListOpen || netExecutor.isShutdown) return
+        val it = listEpgQueue.removeFirstOrNull() ?: return
+        listEpgBusy = true
+        val urlStr = "$apiUrl&action=get_short_epg&stream_id=${it.streamId}&limit=2"
+        try {
+            netExecutor.execute {
+                var entry: EpgEntry? = null
+                try {
+                    val conn = URL(urlStr).openConnection() as HttpURLConnection
+                    conn.connectTimeout = 6000; conn.readTimeout = 6000
+                    conn.setRequestProperty("User-Agent", USER_AGENT)
+                    val text = try { conn.inputStream.bufferedReader().use { r -> r.readText() } } finally { conn.disconnect() }
+                    val now = System.currentTimeMillis() / 1000
+                    val arr = JSONObject(text).optJSONArray("epg_listings")
+                    if (arr != null) for (k in 0 until arr.length()) {
+                        val o = arr.optJSONObject(k) ?: continue
+                        val e = EpgEntry(decodeMaybeBase64(o.optString("title", "")).trim(),
+                            o.optString("start_timestamp", "0").toLongOrNull() ?: 0L, o.optString("stop_timestamp", "0").toLongOrNull() ?: 0L)
+                        if (e.title.isNotEmpty() && e.stopSec > now) { entry = e; break }
+                    }
+                } catch (e: Exception) { }
+                runOnUiThread {
+                    listEpgBusy = false
+                    if (isDestroyed) return@runOnUiThread
+                    entry?.let { e -> listEpg[it.streamId] = e; if (channelListOpen && panelRoot.visibility == View.VISIBLE) panelAdapter.rows = channelRows() }
+                    ui.postDelayed({ pumpListEpg() }, 700)
+                }
+            }
+        } catch (e: Exception) { listEpgBusy = false }
     }
 
     private fun openSettings() {

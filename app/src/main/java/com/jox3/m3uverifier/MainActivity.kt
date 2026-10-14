@@ -249,6 +249,9 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun getContinueWatching(): String = PlayerActivity.continueWatching(this@MainActivity)
 
+        @JavascriptInterface
+        fun getRecentLive(): String = PlayerActivity.recentLive(this@MainActivity)
+
         /** true en TV box / Android TV (se maneja con control remoto). */
         @JavascriptInterface
         fun isTv(): Boolean = isTvDevice(this@MainActivity)

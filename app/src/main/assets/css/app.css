@@ -572,3 +572,10 @@ body.tv .rail{padding-top:18px}
 .sheet.show ~ .toasts{bottom:auto;top:calc(16px + var(--safe-top))}
 .set-row svg.chev{width:20px;height:20px;color:var(--muted)}
 .crash{font-family:ui-monospace,monospace;font-size:11px;line-height:1.45;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;white-space:pre-wrap;word-break:break-all;max-height:240px;overflow:auto;color:var(--muted);margin-bottom:14px}
+/* Etiqueta de tipo en las tarjetas de Inicio */
+.tb{display:inline-block;font-style:normal;font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:5px;color:#fff;line-height:1.3}
+.tb-vod{background:rgba(154,63,196,.9)}.tb-series{background:rgba(63,95,196,.92)}.tb-live{background:rgba(255,59,78,.9)}
+.po .t .tb{display:table;margin-bottom:4px}
+.cw .img .tb{position:absolute;top:6px;left:6px;z-index:1}
+.lc .n .tb{margin-bottom:3px}
+.lc.last{border-color:rgba(255,59,78,.55);background:linear-gradient(135deg,rgba(255,59,78,.12),var(--surface) 60%)}

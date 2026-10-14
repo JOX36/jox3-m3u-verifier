@@ -1115,14 +1115,31 @@ function continueAll(sess = S.session) {
   return list.filter(x => x.url && x.dur > 0 && (x.url.startsWith(pv) || x.url.startsWith(ps)) && !(parentalLocked() && ADULT_RX.test(x.name || '')))
     .slice(0, 20).map(x => ({ ...x, type: x.url.startsWith(pv) ? 'vod' : 'series' }));
 }
+const TYPE_LABEL = { vod: 'Película', series: 'Serie', live: 'TV' };
+function typeTag(type) { return TYPE_LABEL[type] ? `<em class="tb tb-${type}">${TYPE_LABEL[type]}</em>` : ''; }
 function cwHtml(x, onclick) {
   const left = Math.max(1, Math.round((x.dur - x.pos) / 60000));
-  return `<button class="cw" onclick="${onclick}"><div class="img">${x.poster ? `<img src="${esc(x.poster)}" loading="lazy" alt="" onerror="this.remove()">` : ''}<span class="pl">${icon('play')}</span><i style="width:${Math.round(x.pos / x.dur * 100)}%"></i></div><b>${esc(x.name)}</b><small>Quedan ${left} min</small></button>`;
+  return `<button class="cw" onclick="${onclick}"><div class="img">${x.poster ? `<img src="${esc(x.poster)}" loading="lazy" alt="" onerror="this.remove()">` : ''}${x.type ? typeTag(x.type) : ''}<span class="pl">${icon('play')}</span><i style="width:${Math.round(x.pos / x.dur * 100)}%"></i></div><b>${esc(x.name)}</b><small>Quedan ${left} min</small></button>`;
 }
 function renderHomeContinue() {
   const box = $('home-cont'); if (!box) return;
   const list = H.cont = continueAll();
   box.innerHTML = list.length ? `<section class="hrow"><h2 class="sec">Continuar viendo</h2><div class="rail">${list.map((x, i) => cwHtml(x, `homeResume(${i})`)).join('')}</div></section>` : '';
+}
+/* Últimos canales en vivo vistos (los guarda el reproductor, también al cambiar de canal ahí) */
+function recentLiveItems(sess = S.session) {
+  if (!sess) return [];
+  let list = [];
+  try { if (window.NativeApp && NativeApp.getRecentLive) list = JSON.parse(NativeApp.getRecentLive() || '[]'); } catch { }
+  const pre = `${sess.host}/live/${sess.username}/`;
+  return list.filter(x => x.url && x.url.startsWith(pre) && x.streamId && !(parentalLocked() && ADULT_RX.test(x.name || '')))
+    .slice(0, 15).map(x => ({ stream_id: x.streamId, name: x.name, stream_icon: x.poster || '', epg_channel_id: x.epgId || '' }));
+}
+function renderHomeRecent() {
+  const box = $('hr-recent'); if (!box) return;
+  const recent = recentLiveItems();
+  box.innerHTML = recent.length ? liveRowHtml(recent, 'recent', 'Vistos hace poco', '') : '';
+  if (S.cfg.showEpg !== false && (!S.epgOff || extOn())) { recent.slice(0, 8).forEach(it => { if (!S.epg[it.stream_id]) epgQueue.push(String(it.stream_id)); }); pumpEpg(); }
 }
 function homeResume(i) {
   const x = H.cont[i]; if (!x) return;
@@ -1137,23 +1154,23 @@ function posterRow(key, type, title, items, moreJs) {
   if (!items.length) return '';
   H.rows[key] = { type, items };
   return `<section class="hrow"><h2 class="sec">${esc(title)}${moreJs ? `<button onclick="${moreJs}">Ver todas</button>` : ''}</h2>
-    <div class="rail">${items.map((it, i) => posterHtml(type, it, `homeOpen('${key}',${i})`, `data-hk="${key}" data-hi="${i}"`)).join('')}</div></section>`;
+    <div class="rail">${items.map((it, i) => posterHtml(type, it, `homeOpen('${key}',${i})`, `data-hk="${key}" data-hi="${i}"`, true)).join('')}</div></section>`;
 }
 function homeItem(key, i) { const r = H.rows[key]; return r && r.items[i] ? { type: r.type, it: r.items[i] } : null; }
 function homeOpen(key, i) { const h = homeItem(key, i); if (h) openDetail(h.type, h.it); }
-function liveRowHtml(items) {
-  H.rows.live = { type: 'live', items };
-  return `<section class="hrow"><h2 class="sec"><span class="live-ttl"><i class="live-dot"></i>Tus canales ahora</span><button onclick="switchTab('live',{cat:'fav'})">Ver todos</button></h2>
+function liveRowHtml(items, key = 'live', title = 'Tus canales ahora', moreJs = `switchTab('live',{cat:'fav'})`) {
+  H.rows[key] = { type: 'live', items };
+  return `<section class="hrow"><h2 class="sec"><span class="live-ttl"><i class="live-dot"></i>${esc(title)}</span>${moreJs ? `<button onclick="${moreJs}">Ver todos</button>` : ''}</h2>
     <div class="rail">${items.map((it, i) => {
       noteCh(it);
       const sid = it.stream_id, e = S.epg[sid], noEpg = S.cfg.showEpg === false || (S.epgOff && !extOn());
-      return `<button class="lc" onclick="homePlayLive(${i})">${logoHtml(itemName(it), it.stream_icon)}<span class="n"><b>${esc(itemName(it))}</b>
+      return `<button class="lc${key === 'recent' && i === 0 ? ' last' : ''}" onclick="homePlayLive(${i},'${key}')">${logoHtml(itemName(it), it.stream_icon)}<span class="n">${key === 'recent' && i === 0 ? '<em class="tb tb-live">Último visto</em>' : ''}<b>${esc(itemName(it))}</b>
         <small class="epg" data-sid="${esc(sid)}">${e ? esc(e.text) : noEpg ? esc(catName('live', it.category_id) || 'En vivo') : 'Buscando qué están pasando…'}</small>${e && e.pct != null ? `<span class="p"><i style="width:${e.pct}%"></i></span>` : ''}</span></button>`;
     }).join('')}</div></section>`;
 }
-function homePlayLive(i) {
-  const items = (H.rows.live || {}).items || []; if (!items[i]) return;
-  nativePlay(items.map(it => ({ name: itemName(it), url: streamUrl('live', it), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '', epgId: it.epg_channel_id || '' })), i, 'Favoritos');
+function homePlayLive(i, key = 'live') {
+  const items = (H.rows[key] || {}).items || []; if (!items[i]) return;
+  nativePlay(items.map(it => ({ name: itemName(it), url: streamUrl('live', it), streamId: String(it.stream_id), isLive: true, poster: it.stream_icon || '', epgId: it.epg_channel_id || '' })), i, key === 'recent' ? 'Vistos hace poco' : 'Favoritos');
 }
 function newestOf(type, items, n = 24) {
   const key = type === 'vod' ? 'added' : 'last_modified';
@@ -1168,12 +1185,14 @@ async function renderHomeRows(gen) {
   const favSer = filterAllowed('series', Object.values(favMap('series')));
   const showNew = S.cfg.homeNew !== false;
   H.rows = {};
-  box.innerHTML = `${favLive.length ? liveRowHtml(favLive) : ''}
+  const recent = recentLiveItems();
+  box.innerHTML = `<div id="hr-recent">${recent.length ? liveRowHtml(recent, 'recent', 'Vistos hace poco', '') : ''}</div>
+    ${favLive.length ? liveRowHtml(favLive) : ''}
     <div id="hr-vod">${showNew ? skelRow('Nuevas películas') : ''}</div>
     <div id="hr-series">${showNew ? skelRow('Nuevas series') : ''}</div>
     ${posterRow('fvod', 'vod', 'Películas favoritas', favVod, `switchTab('vod',{cat:'fav'})`)}
     ${posterRow('fseries', 'series', 'Series favoritas', favSer, `switchTab('series',{cat:'fav'})`)}`;
-  if (favLive.length && S.cfg.showEpg !== false && (!S.epgOff || extOn())) { favLive.slice(0, 12).forEach(it => { if (!S.epg[it.stream_id]) epgQueue.push(String(it.stream_id)); }); pumpEpg(); }
+  if (S.cfg.showEpg !== false && (!S.epgOff || extOn())) { [...recent.slice(0, 8), ...favLive.slice(0, 12)].forEach(it => { if (!S.epg[it.stream_id]) epgQueue.push(String(it.stream_id)); }); pumpEpg(); }
   const heroFrom = list => list.slice(0, 6);
   if (!showNew) { setHero(heroFrom([...favVod.map(it => ({ type: 'vod', it })), ...favSer.map(it => ({ type: 'series', it }))])); return; }
   $('home-hero').innerHTML = `<div class="hero-card skel"></div>`;
@@ -1683,9 +1702,9 @@ function ensureExtEpg() {
   try { NativeEpg.ensure(extCodes().join(',')); } catch { }
 }
 // Programas de la guía de internet para un canal (o null si no está).
-function extPrograms(sid, from, to) {
-  if (!extOn()) return null;
-  const m = S_meta[String(sid)]; if (!m) return null;
+function extPrograms(sid, from, to) { return extProgramsFor(S_meta[String(sid)], from, to); }
+function extProgramsFor(m, from, to) {
+  if (!extOn() || !m) return null;
   try {
     const r = NativeEpg.lookupIn ? NativeEpg.lookupIn(m.n, m.g || '', Math.floor(from), Math.floor(to), m.c || '') : NativeEpg.lookup(m.n, m.g || '', Math.floor(from), Math.floor(to));
     if (!r) return null;
@@ -1693,8 +1712,8 @@ function extPrograms(sid, from, to) {
     return (d.list || []).map(x => ({ t: x.t, d: x.d || '', s: +x.s, e: +x.e, ext: true })).filter(x => x.t && x.e > x.s).sort((a, b) => a.s - b.s);
   } catch { return null; }
 }
-function extNowEntry(sid) {
-  const now = Date.now() / 1000, list = extPrograms(sid, now - 3600, now + 6 * 3600);
+function extNowEntry(sid, meta) {
+  const now = Date.now() / 1000, list = meta ? extProgramsFor(meta, now - 3600, now + 6 * 3600) : extPrograms(sid, now - 3600, now + 6 * 3600);
   if (!list || !list.length) return null;
   const cur = list.find(x => x.e > now && x.s <= now) || list.find(x => x.e > now);
   if (!cur) return null;
@@ -1898,10 +1917,10 @@ async function loadGrid(type, cat) {
   gridObserver[type] = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) appendGrid(type); }, { root: body, rootMargin: '800px' });
   gridObserver[type].observe($(`${type}-more`));
 }
-function posterHtml(type, it, onclick, attrs = '') {
+function posterHtml(type, it, onclick, attrs = '', tag = false) {
   const img = itemImg(type, it), r = rating(it), q = quality(it.name), name = cleanTitle(itemName(it));
   return `<button class="po${img ? '' : ' noimg'}" onclick="${onclick}" ${attrs}>${img ? `<img src="${esc(img)}" loading="lazy" alt="" onerror="this.parentNode.classList.add('noimg');this.remove()">` : ''}
-    ${r ? `<span class="r">★ ${r}</span>` : ''}${q ? `<span class="q">${q}</span>` : ''}<span class="t">${esc(name)}</span>${isFav(type, it) ? `<span class="fv">${icon('star')}</span>` : ''}</button>`;
+    ${r ? `<span class="r">★ ${r}</span>` : ''}${q ? `<span class="q">${q}</span>` : ''}<span class="t">${tag ? typeTag(type) : ''}${esc(name)}</span>${isFav(type, it) ? `<span class="fv">${icon('star')}</span>` : ''}</button>`;
 }
 function appendGrid(type) {
   const grid = $(`${type}-grid`); if (!grid) return;
@@ -2273,9 +2292,18 @@ async function runSearch(force) {
       const r = f[t].slice(0, MAXR); if (!r.length) continue;
       const lim = searchType === 'all' ? 6 : 60;
       html += `<h3 class="srv-type">${{ live: 'TV en vivo', series: 'Series', vod: 'Películas' }[t]} <span class="hint">${fmtNum(f[t].length)}</span></h3>`;
-      const cell = (it, i) => t === 'live'
-        ? `<button class="ch${i >= lim ? ' more' : ''}" onclick="openSearchItem(${ai},'live',${i})">${logoHtml(itemName(it), it.stream_icon)}<span class="n"><b>${esc(itemName(it))}</b></span>${icon('play')}</button>`
-        : posterHtml(t, it, `openSearchItem(${ai},'${t}',${i})`).replace('<button class="po', `<button class="po${i >= lim ? ' more' : ''}`);
+      const own = a.id === S.activeId;
+      const cell = (it, i) => {
+        if (t !== 'live') return posterHtml(t, it, `openSearchItem(${ai},'${t}',${i})`).replace('<button class="po', `<button class="po${i >= lim ? ' more' : ''}`);
+        // Guía bajo el canal: la del servidor para la cuenta activa (se pide al aparecer); para las demás, la de internet.
+        let now = '';
+        if (S.cfg.showEpg !== false) {
+          if (own) { noteCh(it); const e = S.epg[it.stream_id]; now = `<small class="epg" data-sid="${esc(it.stream_id)}">${e ? esc(e.text) : ''}</small>${e && e.pct != null ? `<span class="p"><i style="width:${e.pct}%"></i></span>` : ''}`; }
+          else if (i < lim) { const e = extNowEntry(null, { n: itemName(it), g: it.epg_channel_id || '', c: '' }); if (e) now = `<small class="epg">${esc(e.text)}</small>${e.pct != null ? `<span class="p"><i style="width:${e.pct}%"></i></span>` : ''}`; }
+        }
+        return `<button class="ch${i >= lim ? ' more' : ''}" onclick="openSearchItem(${ai},'live',${i})">${logoHtml(itemName(it), it.stream_icon)}<span class="n"><b>${esc(itemName(it))}</b>${now}</span>${icon('play')}</button>`;
+      };
+      if (t === 'live' && own && S.cfg.showEpg !== false && (!S.epgOff || extOn())) r.slice(0, lim).forEach(it => { if (!S.epg[it.stream_id]) epgQueue.push(String(it.stream_id)); });
       html += `<div class="${t === 'live' ? 'res-list' : 'grid'}">${r.map(cell).join('')}</div>`;
       if (r.length > lim) html += `<button class="btn sm more-btn" onclick="showMoreResults(this)">Ver ${fmtNum(r.length - lim)} más</button>`;
       if (f[t].length > MAXR) html += `<div class="hint" style="margin-top:6px">Se muestran los primeros ${MAXR}. Escribe una palabra más precisa para ver el resto.</div>`;
@@ -2283,6 +2311,7 @@ async function runSearch(force) {
     html += `</details>`;
   });
   body.innerHTML = html;
+  pumpEpg();
 }
 // Nombre corto del servidor: "prolive.xyz:8080" → "prolive".
 function serverName(a) {
@@ -2666,6 +2695,6 @@ document.addEventListener('visibilitychange', () => {
   if (S.tab === 'live') refreshExpiredEpg();
   if (S.tab === 'vod' || S.tab === 'series') renderContinue(S.tab);
   if (S.tab === 'home' || accountsOpen()) checkClipboardHint();
-  if (S.tab === 'home') renderHomeContinue();
+  if (S.tab === 'home') { renderHomeContinue(); renderHomeRecent(); }
 });
 init();
