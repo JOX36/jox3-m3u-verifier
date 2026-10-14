@@ -2611,6 +2611,16 @@ function init() {
   schedulePreload(PRE_FIRST);
   // Revisar si hay versión nueva (como mucho cada 12 horas).
   if (S.cfg.autoUpdate !== false && Date.now() - (S.cfg.lastUpdateCheck || 0) > 12 * 3600e3) setTimeout(() => checkUpdate(false), 4000);
+  // Si la app se cerró por un error, mostrar qué pasó (para poder corregirlo).
+  let crash = '';
+  try { if (window.NativeApp && NativeApp.lastCrash) crash = NativeApp.lastCrash() || ''; } catch { }
+  if (crash) {
+    S.lastCrash = crash;
+    setTimeout(() => showSheet('La app se cerró por un error', `
+      <p class="confirm-txt">Ya volvió a abrir. Si te pasa de nuevo, copia este detalle y compártelo para corregirlo.</p>
+      <pre class="crash">${esc(crash.split('\n').slice(0, 14).join('\n'))}</pre>
+      <div class="list-actions confirm-actions"><button class="btn primary" onclick="copyText(S.lastCrash,'Detalle copiado')">${icon('copy')}Copiar detalle</button><button class="btn" onclick="closeTop()">Cerrar</button></div>`), 900);
+  }
   // Recién actualizada: contar qué cambió.
   const pn = S.cfg.pendingNotes;
   if (pn && pn.ver) {
