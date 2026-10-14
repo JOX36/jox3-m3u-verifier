@@ -571,3 +571,4 @@ body.tv .rail{padding-top:18px}
 /* Con una hoja abierta los avisos salen arriba, para no tapar sus botones */
 .sheet.show ~ .toasts{bottom:auto;top:calc(16px + var(--safe-top))}
 .set-row svg.chev{width:20px;height:20px;color:var(--muted)}
+.crash{font-family:ui-monospace,monospace;font-size:11px;line-height:1.45;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;white-space:pre-wrap;word-break:break-all;max-height:240px;overflow:auto;color:var(--muted);margin-bottom:14px}

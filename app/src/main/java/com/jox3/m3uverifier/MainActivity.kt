@@ -324,6 +324,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun lastCrash(): String = App.takeLastCrash(this@MainActivity)
+
+        @JavascriptInterface
         fun appVersion(): String = try {
             packageManager.getPackageInfo(packageName, 0).versionName ?: ""
         } catch (e: Exception) { "" }

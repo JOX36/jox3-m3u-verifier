@@ -71,6 +71,12 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.audio.AudioRendererEventListener
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer
+import androidx.media3.decoder.ffmpeg.FfmpegLibrary
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.extractor.DefaultExtractorsFactory
@@ -124,6 +130,8 @@ class PlayerActivity : AppCompatActivity() {
         private const val NEXT_EPISODE_SECONDS = 8
 
         private const val PREFS_PLAYER = "jox3_player"
+        private const val KEY_STARTING = "player_starting"
+        const val KEY_FFMPEG_OFF = "ffmpeg_off"
         private const val KEY_RESIZE = "resize_mode_v2"
 
         /**
@@ -331,6 +339,7 @@ class PlayerActivity : AppCompatActivity() {
             .getInt(KEY_RESIZE, RESIZE_SMART)
         setupEdgeToEdge()
         parsePayload(readPayload(intent))
+        markStarting()
         castContext = CastSupport.context(this)
         // Por si el reproductor se abre sin pasar por la interfaz: cargar la guía de internet ya descargada.
         ExternalEpg.ensure(this, ExternalEpg.savedCodes(this)) {
@@ -372,6 +381,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        startedOk()
         saveResumePosition()
         stoppedAt = System.currentTimeMillis()
         if (casting) { super.onStop(); ui.removeCallbacks(tickRunnable); return }   // sigue sonando en el TV
@@ -493,12 +503,7 @@ class PlayerActivity : AppCompatActivity() {
             .build()
 
         player = ExoPlayer.Builder(this)
-            .setRenderersFactory(
-                DefaultRenderersFactory(this)
-                    .setEnableDecoderFallback(true)
-                    // Primero el decodificador del equipo; si no sabe (Dolby AC-3, DTS…), el de FFmpeg incluido.
-                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
-            )
+            .setRenderersFactory(SafeRenderersFactory(this, ffmpegAllowed()).setEnableDecoderFallback(true))
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory, extractors))
             .setLoadControl(loadControl)
             .setAudioAttributes(
@@ -534,6 +539,7 @@ class PlayerActivity : AppCompatActivity() {
             loading.visibility = if (playbackState == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
             if (playbackState == Player.STATE_READY) {
                 retryCount = 0
+                startedOk()
                 rememberLiveFormat()
                 if (countdownLeft <= 0) hideMessage()
                 updateProgress()
@@ -631,6 +637,27 @@ class PlayerActivity : AppCompatActivity() {
         if (item.isLive && item.streamId.isNotEmpty() && apiUrl.isNotEmpty()) fetchEpg(item)
         showControls()
     }
+
+    // ═══ Arranque seguro ═══
+    // Si el reproductor se cierra solo mientras arranca (un fallo nativo no deja rastro), la próxima vez
+    // abre sin el decodificador de audio extra. Se marca antes de crear el reproductor y se borra
+    // cuando algo llega a reproducirse o se sale normalmente.
+    private var startingMarked = false
+
+    private fun markStarting() {
+        val sp = getSharedPreferences(PREFS_PLAYER, MODE_PRIVATE)
+        if (sp.getBoolean(KEY_STARTING, false)) sp.edit().putBoolean(KEY_FFMPEG_OFF, true).commit()
+        sp.edit().putBoolean(KEY_STARTING, true).commit()
+        startingMarked = true
+    }
+
+    private fun startedOk() {
+        if (!startingMarked) return
+        startingMarked = false
+        getSharedPreferences(PREFS_PLAYER, MODE_PRIVATE).edit().putBoolean(KEY_STARTING, false).apply()
+    }
+
+    private fun ffmpegAllowed() = !getSharedPreferences(PREFS_PLAYER, MODE_PRIVATE).getBoolean(KEY_FFMPEG_OFF, false)
 
     // ═══ Formato del canal en vivo ═══
     // Muchos servidores entregan HLS (.m3u8) aunque la dirección diga .ts, o la cuenta solo permite
@@ -2334,5 +2361,30 @@ class PlayerActivity : AppCompatActivity() {
             rowView.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             return rowView
         }
+    }
+}
+
+/**
+ * Renderizadores del reproductor: los del equipo primero y, detrás, el decodificador de audio FFmpeg
+ * (Dolby AC-3/E-AC-3, DTS, MP2…). Si FFmpeg no carga en este equipo por cualquier motivo, se sigue sin él
+ * en vez de cerrar el reproductor.
+ */
+@OptIn(UnstableApi::class)
+private class SafeRenderersFactory(context: Context, private val useFfmpeg: Boolean) : DefaultRenderersFactory(context) {
+    override fun buildAudioRenderers(
+        context: Context,
+        extensionRendererMode: Int,
+        mediaCodecSelector: MediaCodecSelector,
+        enableDecoderFallback: Boolean,
+        audioSink: AudioSink,
+        eventHandler: Handler,
+        eventListener: AudioRendererEventListener,
+        out: ArrayList<Renderer>
+    ) {
+        super.buildAudioRenderers(context, EXTENSION_RENDERER_MODE_OFF, mediaCodecSelector, enableDecoderFallback, audioSink, eventHandler, eventListener, out)
+        if (!useFfmpeg) return
+        try {
+            if (FfmpegLibrary.isAvailable()) out.add(FfmpegAudioRenderer(eventHandler, eventListener, audioSink))
+        } catch (t: Throwable) { /* sin FFmpeg en este equipo */ }
     }
 }
