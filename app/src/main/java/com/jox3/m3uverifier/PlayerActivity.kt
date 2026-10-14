@@ -59,6 +59,7 @@ import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
@@ -265,6 +266,11 @@ class PlayerActivity : AppCompatActivity() {
 
     // ═══ Tareas programadas ═══
     private val hideControlsRunnable = Runnable { hideControls() }
+    // En vivo: dirección que se está probando y si ya se intentó con el otro formato (.ts ↔ .m3u8).
+    private var playingUrl = ""
+    private var playingMime: String? = null
+    private var altStep = 0           // 0 = como viene, 1 = otra extensión, 2 = misma dirección leída como HLS/TS
+    private val altTried get() = altStep > 0
     private val retryRunnable = Runnable {
         if (isLive) player.seekToDefaultPosition()
         player.prepare()
@@ -522,6 +528,7 @@ class PlayerActivity : AppCompatActivity() {
             loading.visibility = if (playbackState == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
             if (playbackState == Player.STATE_READY) {
                 retryCount = 0
+                rememberLiveFormat()
                 if (countdownLeft <= 0) hideMessage()
                 updateProgress()
             }
@@ -586,10 +593,11 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         val start = if (!item.isLive && useSavedPosition) savedPosition(item.url) else 0L
-        val mediaItem = MediaItem.Builder()
-            .setUri(item.url)
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(item.name).build())
-            .build()
+        // En vivo se empieza con el formato que ya funcionó en este servidor.
+        altStep = 0
+        if (item.isLive) { val (u, m) = preferredLive(item.url); playingUrl = u; playingMime = m }
+        else { playingUrl = item.url; playingMime = null }
+        val mediaItem = buildMediaItem(playingUrl, item.name, playingMime)
         if (casting) {
             player.stop()
             castLoad(item, if (item.isLive) C.TIME_UNSET else start)
@@ -606,6 +614,80 @@ class PlayerActivity : AppCompatActivity() {
 
         if (item.isLive && item.streamId.isNotEmpty() && apiUrl.isNotEmpty()) fetchEpg(item)
         showControls()
+    }
+
+    // ═══ Formato del canal en vivo ═══
+    // Muchos servidores entregan HLS (.m3u8) aunque la dirección diga .ts, o la cuenta solo permite
+    // uno de los dos. Si el canal no abre por formato, se prueba el otro y se recuerda por servidor.
+    private fun fmtKey(url: String) = "fmt_" + (try { java.net.URI(url).host } catch (e: Exception) { null } ?: "")
+
+    private fun swapFormat(url: String): String? = when {
+        url.endsWith(".ts", true) -> url.dropLast(3) + ".m3u8"
+        url.endsWith(".m3u8", true) -> url.dropLast(5) + ".ts"
+        else -> null
+    }
+
+    private fun mimeFor(url: String): String? = when {
+        url.endsWith(".m3u8", true) -> MimeTypes.APPLICATION_M3U8
+        url.endsWith(".ts", true) -> MimeTypes.VIDEO_MP2T
+        else -> null
+    }
+
+    /** Formato guardado para este servidor: "m3u8", "ts" o "ts-hls" (dirección .ts que en realidad entrega HLS). */
+    private fun preferredLive(url: String): Pair<String, String?> {
+        val pref = getSharedPreferences(PREFS_PLAYER, MODE_PRIVATE).getString(fmtKey(url), null) ?: return url to null
+        val isTs = url.endsWith(".ts", true)
+        return when {
+            pref == "m3u8" && isTs -> (url.dropLast(3) + ".m3u8") to MimeTypes.APPLICATION_M3U8
+            pref == "ts-hls" && isTs -> url to MimeTypes.APPLICATION_M3U8
+            pref == "ts" && url.endsWith(".m3u8", true) -> (url.dropLast(5) + ".ts") to MimeTypes.VIDEO_MP2T
+            else -> url to null
+        }
+    }
+
+    private fun rememberLiveFormat() {
+        if (!isLive || playingUrl.isEmpty() || altStep == 0) return
+        val fmt = when {
+            playingUrl.endsWith(".m3u8", true) -> "m3u8"
+            playingUrl.endsWith(".ts", true) && playingMime == MimeTypes.APPLICATION_M3U8 -> "ts-hls"
+            playingUrl.endsWith(".ts", true) -> "ts"
+            else -> return
+        }
+        getSharedPreferences(PREFS_PLAYER, MODE_PRIVATE).edit().putString(fmtKey(playingUrl), fmt).apply()
+    }
+
+    private fun buildMediaItem(url: String, title: String, mime: String? = null): MediaItem {
+        val b = MediaItem.Builder().setUri(url).setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
+        val m = mime ?: if (url.endsWith(".m3u8", true)) MimeTypes.APPLICATION_M3U8 else null
+        if (m != null) b.setMimeType(m)
+        return b.build()
+    }
+
+    /**
+     * true si se lanzó otro intento. Orden: (1) la otra extensión (.ts ↔ .m3u8);
+     * (2) la dirección original leída a la fuerza como HLS (o TS): pasa cuando el servidor
+     * redirige el .ts a una lista .m3u8 de otra fuente, típico en canales "reenviados".
+     */
+    private fun tryOtherFormat(error: PlaybackException): Boolean {
+        val item = current ?: return false
+        if (!isLive || casting || altStep >= 2) return false
+        val http = (error.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode
+        val formatProblem = error.errorCode in 3000..3999 || http == 403 || http == 404 || http == 406 || http == 415
+        if (!formatProblem) return false
+        val orig = item.url
+        val next: Pair<String, String?> = if (altStep == 0) {
+            val alt = swapFormat(playingUrl) ?: return false
+            alt to mimeFor(alt)
+        } else {
+            orig to (if (orig.endsWith(".ts", true)) MimeTypes.APPLICATION_M3U8 else MimeTypes.VIDEO_MP2T)
+        }
+        altStep++
+        playingUrl = next.first; playingMime = next.second
+        showMessage("Probando otro formato… ($altStep/2)", "El canal no abrió a la primera; intentando de otra forma.")
+        player.setMediaItem(buildMediaItem(playingUrl, item.name, playingMime))
+        player.prepare()
+        player.playWhenReady = true
+        return true
     }
 
     private fun configureControlsForItem(item: PlaylistItem) {
@@ -626,6 +708,7 @@ class PlayerActivity : AppCompatActivity() {
             player.prepare()
             return
         }
+        if (tryOtherFormat(error)) return
         val detail = describeError(error)
         // Un 4xx (403, 404…) es una respuesta del servidor, no un corte: reintentar
         // no sirve y puede empeorar un bloqueo de la IP. Solo se reintentan cortes y 5xx.
@@ -659,7 +742,9 @@ class PlayerActivity : AppCompatActivity() {
                 "No se pudo conectar con el servidor. Revisa tu internet."
             error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ->
                 "El servidor tardó demasiado en responder."
-            error.errorCode in 3000..3999 -> "El formato del stream no es compatible."
+            error.errorCode in 3000..3999 && isLive ->
+                "El canal no está enviando video ahora (puede estar caído en el servidor)." + if (altTried) " Se probó en TS y en HLS." else ""
+            error.errorCode in 3000..3999 -> "El formato del archivo no es compatible."
             error.errorCode in 4000..4999 -> "Este dispositivo no puede decodificar el video."
             else -> "Error de reproducción (${error.errorCodeName})."
         }

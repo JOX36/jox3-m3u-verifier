@@ -231,7 +231,12 @@ function linksOf(a) {
 }
 function streamUrl(type, it, a = S.session) {
   const base = `${a.host}`, u = a.username, p = a.password;
-  if (type === 'live') return `${base}/live/${u}/${p}/${it.stream_id}.ts`;
+  if (type === 'live') {
+    // Si la cuenta no permite TS pero sí HLS, se pide directamente en .m3u8.
+    const f = (a.formats || (a.userInfo && a.userInfo.allowed_output_formats) || []).map(x => String(x).toLowerCase());
+    const ext = f.length && !f.includes('ts') && f.includes('m3u8') ? 'm3u8' : 'ts';
+    return `${base}/live/${u}/${p}/${it.stream_id}.${ext}`;
+  }
   if (type === 'vod') return `${base}/movie/${u}/${p}/${it.stream_id}.${vodExt(it)}`;
   if (type === 'episode') return `${base}/series/${u}/${p}/${it.id}.${it.container_extension || 'mkv'}`;
   return `${base}/series/${u}/${p}/${it.series_id}.m3u8`;
