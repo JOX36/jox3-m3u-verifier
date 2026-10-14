@@ -249,6 +249,9 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun getContinueWatching(): String = PlayerActivity.continueWatching(this@MainActivity)
 
+        @JavascriptInterface
+        fun getRecentLive(): String = PlayerActivity.recentLive(this@MainActivity)
+
         /** true en TV box / Android TV (se maneja con control remoto). */
         @JavascriptInterface
         fun isTv(): Boolean = isTvDevice(this@MainActivity)
@@ -340,9 +343,6 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { webView.evaluateJavascript("window.onExtEpgReady && window.onExtEpgReady();", null) }
             }
         }
-        @JavascriptInterface
-        fun lookup(name: String, tvgId: String, fromSec: Long, toSec: Long): String =
-            try { ExternalEpg.lookupJson(this@MainActivity, name, tvgId, fromSec, toSec) } catch (e: Exception) { "" }
         @JavascriptInterface
         fun lookupIn(name: String, tvgId: String, fromSec: Long, toSec: Long, country: String): String =
             try { ExternalEpg.lookupJson(this@MainActivity, name, tvgId, fromSec, toSec, country) } catch (e: Exception) { "" }
