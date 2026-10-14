@@ -87,6 +87,7 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(NativePlayer(), "NativePlayer")
         webView.addJavascriptInterface(NativeFiles(), "NativeFiles")
         webView.addJavascriptInterface(NativeApp(), "NativeApp")
+        webView.addJavascriptInterface(NativeEpg(), "NativeEpg")
 
         // Atrás: primero cierra modales/paneles del HTML, luego vuelve a la
         // pestaña principal y solo entonces sale de la app.
@@ -326,6 +327,25 @@ class MainActivity : AppCompatActivity() {
         fun appVersion(): String = try {
             packageManager.getPackageInfo(packageName, 0).versionName ?: ""
         } catch (e: Exception) { "" }
+    }
+
+    /** Guía de internet para los canales que el servidor deja sin guía (ver ExternalEpg). */
+    inner class NativeEpg {
+        @JavascriptInterface
+        fun ensure(codes: String) {
+            ExternalEpg.ensure(this@MainActivity, codes.split(',')) {
+                runOnUiThread { webView.evaluateJavascript("window.onExtEpgReady && window.onExtEpgReady();", null) }
+            }
+        }
+        @JavascriptInterface
+        fun lookup(name: String, tvgId: String, fromSec: Long, toSec: Long): String =
+            try { ExternalEpg.lookupJson(this@MainActivity, name, tvgId, fromSec, toSec) } catch (e: Exception) { "" }
+        @JavascriptInterface
+        fun channels(): String = ExternalEpg.channelsJson()
+        @JavascriptInterface
+        fun setManual(name: String, key: String) = ExternalEpg.setManual(this@MainActivity, name, key)
+        @JavascriptInterface
+        fun status(): String = ExternalEpg.status()
     }
 
     inner class NativeFiles {
