@@ -47,8 +47,6 @@ internal fun PlayerActivity.setupEdgeToEdge() {
             layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
     }
-    window.statusBarColor = Color.TRANSPARENT
-    window.navigationBarColor = Color.TRANSPARENT
     window.setBackgroundDrawable(null)
     hideSystemBars()
 }

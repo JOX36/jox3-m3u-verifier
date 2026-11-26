@@ -18,3 +18,33 @@ Verificador y editor de listas IPTV (Xtream Codes / M3U) para Android, con repro
 
 ## Compilar
 GitHub Actions compila el APK en cada push a `main` (pestaña **Actions** → artefacto `JOX3-Verifier-APK`).
+
+## Cómo está organizado
+```
+app/src/main/
+├── assets/                 Interfaz (HTML/CSS/JS dentro de un WebView)
+│   ├── index.html
+│   ├── css/app.css
+│   └── js/                 core → accounts → catalog → home → live → vod → search → mylist → settings → main, y tv.js
+└── java/com/jox3/m3uverifier/
+    ├── MainActivity.kt     WebView y puentes JS ↔ Android (NativeChecker, NativePlayer, NativeApp…)
+    ├── App.kt, Device.kt   Registro de errores y detección de TV box
+    ├── ExternalEpg.kt      Guía de internet para canales sin guía
+    ├── ExpiryAlerts.kt     Avisos de vencimiento de cuentas
+    ├── RemoteAddServer.kt  "Agregar desde el celular" (QR)
+    └── player/             Reproductor nativo (ExoPlayer / Media3)
+        ├── PlayerActivity.kt   estado y ciclo de vida
+        ├── PlayerPlayback.kt   reproducción, formatos TS/HLS, errores, cambio de canal
+        ├── PlayerUi.kt         controles, mensajes e indicadores
+        ├── PlayerInput.kt      gestos, ajuste de imagen, control remoto
+        ├── PlayerPanels.kt     lista de canales y ajustes
+        ├── PlayerTracks.kt     audio, subtítulos, calidad
+        ├── PlayerEpg.kt        guía ahora / después
+        ├── PlayerPip.kt        ventana flotante
+        ├── PlayerCast.kt, CastSupport.kt   Chromecast
+        └── PlayerStorage.kt    reanudar, continuar viendo, recientes
+```
+
+## Tecnología
+Kotlin 2.2 · Android Gradle Plugin 8.13 · Gradle 8.14 · compileSdk 36 / targetSdk 35 · minSdk 21 (Android 5) ·
+Media3 1.8 + decodificador FFmpeg de Jellyfin (deben ir en la misma versión).

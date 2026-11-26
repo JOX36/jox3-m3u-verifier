@@ -70,6 +70,7 @@ class MainActivity : AppCompatActivity() {
         }
         setContentView(container)
 
+        @Suppress("DEPRECATION")   // sin estos permisos las peticiones a los paneles Xtream desde file:// no funcionan
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true

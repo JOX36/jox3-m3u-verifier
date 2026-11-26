@@ -51,7 +51,7 @@ internal fun PlayerActivity.trackDetail(f: Format, type: Int): String? = when (t
 internal fun languageName(code: String?): String? {
     if (code.isNullOrBlank() || code == "und" || code == C.LANGUAGE_UNDETERMINED) return null
     return try {
-        val name = Locale.forLanguageTag(code).getDisplayLanguage(Locale("es"))
+        val name = Locale.forLanguageTag(code).getDisplayLanguage(Locale.forLanguageTag("es"))
         if (name.isBlank() || name.equals(code, ignoreCase = true)) code.uppercase()
         else name.replaceFirstChar { it.uppercase() }
     } catch (e: Exception) { code }
