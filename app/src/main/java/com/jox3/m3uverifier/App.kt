@@ -2,6 +2,7 @@ package com.jox3.m3uverifier
 
 import android.app.Application
 import android.content.Context
+import com.jox3.m3uverifier.player.PlayerActivity
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter

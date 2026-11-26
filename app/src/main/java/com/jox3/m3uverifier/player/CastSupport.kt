@@ -1,4 +1,4 @@
-package com.jox3.m3uverifier
+package com.jox3.m3uverifier.player
 
 import android.content.Context
 import android.net.Uri

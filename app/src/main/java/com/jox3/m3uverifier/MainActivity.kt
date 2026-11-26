@@ -2,35 +2,33 @@ package com.jox3.m3uverifier
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import com.jox3.m3uverifier.player.PlayerActivity
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-
-/** Detecta TV box / Android TV: modo TV del sistema o equipo sin pantalla táctil. */
-fun isTvDevice(ctx: android.content.Context): Boolean {
-    val ui = ctx.getSystemService(android.content.Context.UI_MODE_SERVICE) as? android.app.UiModeManager
-    if (ui?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION) return true
-    val pm = ctx.packageManager
-    return pm.hasSystemFeature("android.software.leanback") ||
-        !pm.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)
-}
 
 class MainActivity : AppCompatActivity() {
 
@@ -55,9 +53,24 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Android 15+ dibuja siempre detrás de las barras del sistema: la interfaz se aparta de ellas
+        // (y del teclado) con relleno, y las barras quedan del color de fondo de la app.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
+        )
         webView = WebView(this)
-        setContentView(webView)
+        val container = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#020b18")) }
+        container.addView(webView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        ViewCompat.setOnApplyWindowInsetsListener(container) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+            WindowInsetsCompat.CONSUMED
+        }
+        setContentView(container)
 
+        @Suppress("DEPRECATION")   // sin estos permisos las peticiones a los paneles Xtream desde file:// no funcionan
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true

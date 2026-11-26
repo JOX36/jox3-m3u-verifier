@@ -24,6 +24,10 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      # Guarda Gradle y las librerías descargadas entre compilaciones (más rápido).
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
       - name: Grant execute permission to gradlew
         run: chmod +x gradlew
 
@@ -51,7 +55,7 @@ jobs:
           ./gradlew assembleRelease 2>&1 | tee build.log || { grep -E -A14 "^e: |error:|What went wrong|Could not (find|resolve)|An issue was found" build.log | grep -v "^\s*$" | head -40 | while IFS= read -r l; do echo "::error::$l"; done; exit 1; }
 
       - name: Upload APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: JOX3-Verifier-APK
           path: app/build/outputs/apk/release/app-release.apk
