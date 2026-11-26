@@ -3,6 +3,7 @@ package com.jox3.m3uverifier
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Color
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -41,6 +42,9 @@ class MainActivity : AppCompatActivity() {
     // Se recrea al cambiar de categoría para no seguir revisando la anterior.
     @Volatile
     private var checkExecutor: ExecutorService = Executors.newFixedThreadPool(6)
+    // "Mejor señal": una prueba a la vez para que no se repartan tu internet y el resultado sea justo.
+    private val signalExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    @Volatile private var signalGen = 0
 
     // Guardar la lista .m3u: el usuario elige dónde (Descargas, Drive, etc.).
     // Las descargas tipo "blob:" del HTML no funcionan dentro de un WebView.
@@ -101,6 +105,7 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(NativeFiles(), "NativeFiles")
         webView.addJavascriptInterface(NativeApp(), "NativeApp")
         webView.addJavascriptInterface(NativeEpg(), "NativeEpg")
+        webView.addJavascriptInterface(NativeSignal(), "NativeSignal")
 
         // Atrás: primero cierra modales/paneles del HTML, luego vuelve a la
         // pestaña principal y solo entonces sale de la app.
@@ -229,6 +234,34 @@ class MainActivity : AppCompatActivity() {
             checkExecutor = Executors.newFixedThreadPool(6)
             old.shutdownNow()
         }
+    }
+
+    inner class NativeSignal {
+        /** Prueba un canal (ver SignalProbe) y devuelve las medidas a window.onSignalResult(id, datos). */
+        @JavascriptInterface
+        fun test(url: String, id: String) {
+            val gen = signalGen
+            try {
+                signalExecutor.execute {
+                    if (gen != signalGen) return@execute
+                    val res = SignalProbe.probe(url) { gen != signalGen || isFinishing }
+                    if (gen != signalGen) return@execute
+                    runOnUiThread {
+                        webView.evaluateJavascript("window.onSignalResult && window.onSignalResult(${JSONObject.quote(id)}, $res);", null)
+                    }
+                }
+            } catch (e: Exception) { }
+        }
+
+        /** Detiene la prueba en curso y descarta las pendientes. */
+        @JavascriptInterface
+        fun cancelAll() { signalGen++ }
+
+        /** true con datos móviles (o una red que cobra por consumo). */
+        @JavascriptInterface
+        fun isMetered(): Boolean = try {
+            (getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager).isActiveNetworkMetered
+        } catch (e: Exception) { false }
     }
 
     inner class NativePlayer {
@@ -423,6 +456,8 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         remoteServer?.stop()
         checkExecutor.shutdownNow()
+        signalGen++
+        signalExecutor.shutdownNow()
         super.onDestroy()
     }
 }

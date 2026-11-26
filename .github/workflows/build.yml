@@ -33,6 +33,10 @@ jobs:
 
       # Llave de firma fija (secretos SIGNING_KEYSTORE_BASE64 y SIGNING_STORE_PASSWORD).
       # Si no existen, se firma con la llave temporal de siempre.
+      # Pruebas automáticas (p. ej. "Mejor señal" contra un servidor de video simulado). Si fallan, no se publica.
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
       - name: Prepare signing key
         env:
           KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}

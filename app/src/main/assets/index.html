@@ -52,6 +52,7 @@
 <symbol id="i-globe" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm-1 17.93A8 8 0 014 12c0-.62.08-1.21.21-1.79L9 15v1a2 2 0 002 2v1.93zm6.9-2.54A2 2 0 0016 16h-1v-3a1 1 0 00-1-1H8v-2h2a1 1 0 001-1V7h2a2 2 0 002-2v-.41a7.99 7.99 0 012.9 12.8z"/></symbol>
 <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0116.5 3C19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></symbol>
 <symbol id="i-loop" viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6a6 6 0 016 6 5.9 5.9 0 01-.7 2.8l1.46 1.46A7.95 7.95 0 0020 12a8 8 0 00-8-8zm0 14a6 6 0 01-6-6c0-1.01.25-1.97.7-2.8L5.24 7.74A7.95 7.95 0 004 12a8 8 0 008 8v3l4-4-4-4v3z"/></symbol>
+<symbol id="i-signal" viewBox="0 0 24 24"><path d="M3 18h3v3H3zm5-4h3v7H8zm5-4h3v11h-3zm5-5h3v16h-3z"/></symbol>
 <symbol id="i-hd" viewBox="0 0 24 24"><path d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2zm-8 12H9.5v-2h-2v2H6V9h1.5v2.5h2V9H11v6zm2-6h4a1 1 0 011 1v4a1 1 0 01-1 1h-4V9zm1.5 4.5h2v-3h-2v3z"/></symbol>
 </defs></svg>
 
@@ -122,6 +123,13 @@
   <div class="seg" id="search-scope" style="margin:0 16px 10px" hidden></div>
   <div class="scroll" id="search-body"></div>
 </div>
+<div class="page" id="page-signal">
+  <header class="appbar">
+    <button class="ib" onclick="closeTop()" aria-label="Volver"><svg class="i"><use href="#i-back"/></svg></button>
+    <h1><span class="sig-kicker">Mejor señal</span><span id="signal-title"></span></h1>
+  </header>
+  <div class="scroll" id="signal-body"></div>
+</div>
 <div class="page" id="page-settings">
   <header class="appbar">
     <button class="ib" onclick="closeTop()" aria-label="Volver"><svg class="i"><use href="#i-back"/></svg></button>
@@ -162,6 +170,7 @@
 <script src="js/live.js"></script>
 <script src="js/vod.js"></script>
 <script src="js/search.js"></script>
+<script src="js/signal.js"></script>
 <script src="js/mylist.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/main.js"></script>

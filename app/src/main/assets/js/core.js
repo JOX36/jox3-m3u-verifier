@@ -422,7 +422,10 @@ function showPage(id) {
 function closeTop() {
   const top = S.stack.pop(); if (!top) return false;
   if (top.kind === 'sheet') { $('sheet').classList.remove('show'); $('scrim').classList.remove('show'); stopRemoteAdd(); }
-  else { $(top.id).classList.remove('show'); if (top.id === 'page-detail') S.detail = null; }
+  else {
+    $(top.id).classList.remove('show'); if (top.id === 'page-detail') S.detail = null;
+    if (top.id === 'page-signal' && typeof sigCancel === 'function') sigCancel();   // salir detiene la prueba
+  }
   return true;
 }
 function closeAll() { while (S.stack.length) closeTop(); }

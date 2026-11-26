@@ -58,7 +58,7 @@ async function preloadStep() {
   PRE.timer = null;
   if (!preloadOn() || PRE.busy) return;
   // No molestar: app detrás o reproduciendo, verificando cuentas, o un servidor frenando.
-  if (S.paused || document.hidden || bulk.running || isRejecting() || chk.inflight || chk.queue.length) { schedulePreload(PRE_GAP); return; }
+  if (S.paused || document.hidden || bulk.running || SIG.running || isRejecting() || chk.inflight || chk.queue.length) { schedulePreload(PRE_GAP); return; }
   const job = preloadJobs().find(j => !isFresh(j.acc.id, j.type) && Date.now() - (PRE.fail[`${j.acc.id}:${j.type}`] || 0) > 3600e3);
   if (!job) { schedulePreload(30 * 60e3); return; }   // todo al día: revisar de nuevo en media hora
   PRE.busy = true; PRE.last = `${serverName(job.acc)} · ${TYPES[job.type].label}`;
