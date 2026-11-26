@@ -44,7 +44,7 @@ object SignalProbe {
             conn = o.conn
             r.put("ttfbMs", ms(t0))
             r.put("code", o.code)
-            if (o.code !in 200..299) return fail(r, "El servidor respondió ${o.code}", t0)
+            if (o.code !in 200..299) return fail(r, httpReason(o.code), t0)
             val type = (o.conn.contentType ?: "").lowercase()
             val input = BufferedInputStream(o.conn.inputStream, 64 * 1024)
             input.mark(64)
@@ -334,6 +334,14 @@ object SignalProbe {
         r.put("error", msg)
         r.put("totalMs", ms(t0))
         return r
+    }
+
+    private fun httpReason(code: Int): String = when (code) {
+        401, 403 -> "Sin permiso: cuenta vencida o con las conexiones ocupadas ($code)"
+        404 -> "El canal ya no existe en este servidor (404)"
+        429, 456, 458, 509 -> "Conexiones llenas en esta cuenta ($code)"
+        in 500..599 -> "El servidor está fallando ($code)"
+        else -> "El servidor respondió $code"
     }
 
     private fun reason(e: Exception): String = when (e) {
