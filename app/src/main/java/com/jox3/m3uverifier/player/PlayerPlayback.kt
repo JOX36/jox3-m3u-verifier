@@ -57,7 +57,8 @@ internal fun PlayerActivity.parsePayload(payload: String) {
                         streamId = o.optString("streamId", ""),
                         isLive = o.optBoolean("isLive", false),
                         poster = o.optString("poster", ""),
-                        epgId = o.optString("epgId", "")
+                        epgId = o.optString("epgId", ""),
+                        apiUrl = o.optString("apiUrl", "")
                     )
                 )
             }

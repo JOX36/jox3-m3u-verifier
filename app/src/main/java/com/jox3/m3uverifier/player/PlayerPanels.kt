@@ -92,10 +92,10 @@ internal fun PlayerActivity.openChannelList() {
 
 /** Pide al servidor la guía de los canales entre dos posiciones de la lista (solo los que faltan). */
 internal fun PlayerActivity.askListEpg(from: Int, to: Int) {
-    if (apiUrl.isEmpty() || !channelListOpen) return
+    if (!channelListOpen) return
     for (i in from.coerceAtLeast(0)..to.coerceAtMost(items.size - 1)) {
         val it = items[i]
-        if (!it.isLive || it.streamId.isEmpty() || listEpgAsked.contains(it.streamId) || listNow(it) != null) continue
+        if (!it.isLive || it.streamId.isEmpty() || (it.apiUrl.isEmpty() && apiUrl.isEmpty()) || listEpgAsked.contains(it.streamId) || listNow(it) != null) continue
         listEpgAsked.add(it.streamId)
         listEpgQueue.addLast(it)
     }
@@ -109,7 +109,7 @@ internal fun PlayerActivity.pumpListEpg() {
     try {
         netExecutor.execute {
             val now = System.currentTimeMillis() / 1000
-            val entry = serverEpg(it.streamId, 2).firstOrNull { e -> e.stopSec > now }
+            val entry = serverEpg(it, 2).firstOrNull { e -> e.stopSec > now }
             runOnUiThread {
                 listEpgBusy = false
                 if (isDestroyed) return@runOnUiThread

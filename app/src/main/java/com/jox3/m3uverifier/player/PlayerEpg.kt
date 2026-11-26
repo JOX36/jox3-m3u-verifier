@@ -19,7 +19,9 @@ import org.json.JSONObject
 // ═══════════════════════════════════════════════════════════════════
 
 /** Guía corta del servidor para un canal (vacía si no tiene o falla). Se llama fuera del hilo principal. */
-internal fun PlayerActivity.serverEpg(streamId: String, limit: Int): List<EpgEntry> {
+internal fun PlayerActivity.serverEpg(item: PlaylistItem, limit: Int): List<EpgEntry> {
+    val streamId = item.streamId
+    val apiUrl = item.apiUrl.ifEmpty { apiUrl }
     if (streamId.isEmpty() || apiUrl.isEmpty()) return emptyList()
     val out = mutableListOf<EpgEntry>()
     try {
@@ -45,7 +47,7 @@ internal fun PlayerActivity.fetchEpg(item: PlaylistItem) {
     val token = ++epgToken
     try {
         netExecutor.execute {
-            val result = serverEpg(item.streamId, 2).toMutableList()
+            val result = serverEpg(item, 2).toMutableList()
             // El servidor no tiene guía para este canal: se busca en la guía de internet.
             if (result.isEmpty() && item.isLive) {
                 val now = System.currentTimeMillis() / 1000

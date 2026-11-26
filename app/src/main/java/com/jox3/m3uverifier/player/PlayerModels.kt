@@ -9,7 +9,9 @@ data class PlaylistItem(
     val streamId: String,
     val isLive: Boolean,
     val poster: String = "",
-    val epgId: String = ""
+    val epgId: String = "",
+    /** Cuenta de este canal si es distinta de la del resto (p. ej. "Mejor señal" mezcla servidores). */
+    val apiUrl: String = ""
 )
 
 /** Un programa de la guía (horas en segundos Unix). */

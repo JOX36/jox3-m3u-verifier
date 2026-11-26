@@ -530,6 +530,7 @@ function openLiveActions(i) {
   const fav = isFav('live', it);
   showSheet(itemName(it), `
     <button class="menu-item" onclick="closeTop();playLive(${i})">${icon('play')}Reproducir</button>
+    <button class="menu-item" onclick="closeTop();openBestSignal(${i})">${icon('signal')}Mejor señal<small class="mi-sub">Compara este canal en todas tus cuentas</small></button>
     <button class="menu-item" onclick="closeTop();addLiveToList(${i})">${icon('list')}Añadir a Mi lista</button>
     <button class="menu-item" onclick="closeTop();toggleFav('live',S.rendered.live[${i}]);refreshFavIcons()">${icon(fav ? 'star' : 'star-o')}${fav ? 'Quitar de favoritos' : 'Añadir a favoritos'}</button>
     <button class="menu-item" onclick="closeTop();copyText(${jsArg(streamUrl('live', it))},'Enlace del canal copiado')">${icon('copy')}Copiar enlace</button>
